@@ -193,8 +193,8 @@ cdef class PLagBase:
             params: parameters of the model
             icov: if not 0, calculate the covariance matrix.
                 Otherwise, assume it has already been calculated
-                and stored in self.Cov. It is calculated only
-                if called from DlnLikelihood
+                and stored in self.Cov. It is not calculated only
+                if called from dLogLikelihood
             inv: if > 0, also calculate the inverse of the
                 covariance matrix. It is not needed for the
                 logLikelihood, but it is needed when doing the
