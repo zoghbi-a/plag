@@ -1,9 +1,19 @@
 
 import numpy as np
 cimport numpy as np
+np.import_array()
 cimport scipy.linalg.cython_lapack as lapack
 cimport scipy.linalg.cython_blas as blas
 from libc.math cimport log, sin, cos, fabs, sqrt, pow, M_PI, exp
+cimport dlfcn
+
+## -- sine/cosine integrals   -- ##
+## -- sici from scipy.special -- ##
+import scipy.special as sp
+ctypedef  int(*sici_t)(double, double*, double*)
+cdef sici_t sici = <sici_t>dlfcn.load_func(
+    sp.__path__[0]+'/_ufuncs.so', 'cephes_sici')
+## ----------------------------- ##
 
 
 cdef class PLagBase:
@@ -112,10 +122,13 @@ cdef class PLagBase:
 
 
         """
-        cdef int i, n = self.n
-        cdef double* Cov = &self.Cov[0,0]
+        cdef:
+            int i, n = self.n
+            double* Cov = &self.Cov[0,0]
+            double* sig2 = &self.sig2[0]
 
-        for i in range(n): Cov[i*n+i] += self.ye2[i]
+
+        for i in range(n): Cov[i*n+i] += sig2[i]
 
 
 
@@ -200,19 +213,155 @@ cdef class PLagBase:
 
 
 
-    def _get_cov_matrix(self, pars):
+    def _get_cov_matrix(self, pars=None):
         """Calculate and return the covariance matrix
             for the parameter array pars
 
         Args:
-            pars: array of parameters
+            pars: array of parameters. If None, just return
+                self.Cov
 
         Returns:
             the Covariance Matrix (without the diagonal sigma)
         """
 
-        self.Covariance(np.array(pars, np.double))
+        if pars is not None:
+            self.Covariance(np.array(pars, np.double))
         return np.asarray(self.Cov)
+
+
+
+    def _set_cov_matrix(self, C):
+        """Set the covariance matrix by hand.
+            Used for testing only.
+
+        Args:
+            C: Matrix of size (n, n)
+        """
+        self.Cov = np.array(C)
+
+
+
+
+cdef class PLagBin(PLagBase):
+    """psd/lag base class for models using predefined
+        frequency bins
+    """
+
+    # global parameters #
+    cdef:
+        public int nfq
+        double[:] fqL
+        double[:,:] cfq, sfq
+    
+
+    def __init__( self, 
+            np.ndarray[dtype=np.double_t, ndim=1] t,
+            np.ndarray[dtype=np.double_t, ndim=1] y, 
+            np.ndarray[dtype=np.double_t, ndim=1] ye, 
+            double dt, int npar, double[:] fqL):
+        """Base class for models using predefined frequency bins
+            It is not meant to be initialized directly.
+            It initializes PLagBase and pre-calculate the integrals.
+
+        Args:
+            ...: Similar to PLagBase
+            fqL: a list or array of the frequency bin boundaries"""
+        
+        self.nfq = fqL.shape[0] - 1
+        self.fqL = np.array(fqL)
+        PLagBase.__init__(self, t, y, ye, dt, npar)
+        self.calculate_integrals()
+
+
+
+    cdef calculate_integrals(self):
+        """Precalculate model integrals resulting from
+            the Fourier transform. For predefined frequency
+            bins, these integrals do not depend on the parameters
+            so we calculate them only once.
+            The results are written to two arrays: self.cfq and 
+            self.sfq (of dims (nfq, nU) )
+
+            cfq:
+                Integrate[Cos[2 pi f  t]*Sinc[pi f dt]^2, f]
+            sfq:
+                Integrate[Sin[2 pi f  t]*Sinc[pi f dt]^2, f]
+
+            The cases of t=0 and t=-+dt are special cases and they
+            are handled separately
+
+            t in in this case is the covariance time lags in self.tU
+
+        """
+        
+        cdef:
+            int i, k, nU = self.nU, nfq = self.nfq, sgn
+            double tt, dt=self.dt, norm, pi=M_PI
+            double[:] cf, sf, fqL = np.array(self.fqL)
+            double s1, c1, s2, c2, s3, c3, dum1, dum2, dum3
+
+
+        self.cfq  = np.empty((nfq, nU), np.double)
+        self.sfq  = np.empty((nfq, nU), np.double)
+
+
+        cf   = np.empty(nfq+1, np.double)
+        sf   = np.empty(nfq+1, np.double)
+        norm = 1./(pi*dt)**2
+
+        for i in range(self.nU):
+            tt  = self.tU[i]
+            sgn = 1 if tt>0 else -1 
+            if np.isclose(tt, 0):
+                # -- tt=0 -- #
+                for k in range(nfq+1):
+                    dum1   = 2*pi*fqL[k]*dt
+                    sici(dum1, &s1, &c1)
+                    cf[k] = pi*dt*s1 + (cos(dum1)-1)/(2*fqL[k])
+                    if k>0:
+                        self.cfq[k-1, i] = norm * (cf[k] - cf[k-1])
+                        self.sfq[k-1, i] = 0
+            elif np.isclose(fabs(tt), dt):
+                # -- abs(tt) = dt -- #
+                for k in range(nfq+1):
+                    dum1 = 2*pi*fqL[k]*dt
+                    dum2 = 2*dum1
+                    sici(dum1, &s1, &c1)
+                    sici(dum2, &s2, &c2)
+                    cf[k] = pi*dt*(-s1+s2) + (
+                                1-2*cos(dum1)+cos(dum2))/(4*fqL[k])
+                    sf[k] = pi*dt*( c1-c2) + (
+                                 -2*sin(dum1)+sin(dum2))/(4*fqL[k])
+                    if k>0:
+                        self.cfq[k-1, i] = norm * (cf[k] - cf[k-1])
+                        self.sfq[k-1, i] = norm * (sf[k] - sf[k-1]) * sgn
+            else:
+                # -- general -- #
+                for k in range(nfq+1):
+                    dum1 = 2*pi*fqL[k]*(dt-tt)
+                    dum2 = 2*pi*fqL[k]*(tt)
+                    dum3 = 2*pi*fqL[k]*(dt+tt)
+                    sici(dum1, &s1, &c1)
+                    sici(dum2, &s2, &c2)
+                    sici(dum3, &s3, &c3)
+                    cf[k] = (dum1*s1-2*dum2*s2+dum3*s3 + 
+                                cos(dum1)-2*cos(dum2)+cos(dum3))/(4*fqL[k])
+                    sf[k] = (dum1*c1+2*dum2*c2-dum3*c3 - 
+                                sin(dum1)-2*sin(dum2)+sin(dum3))/(4*fqL[k])
+                    if k>0:
+                        self.cfq[k-1, i] = norm * (cf[k] - cf[k-1])
+                        self.sfq[k-1, i] = norm * (sf[k] - sf[k-1])
+
+
+    def _get_integrals(self, str stype, int idx):
+        """Make the integral arrays accessible from
+            python, so we can test they are correct.
+            This is used for testing only
+
+        """
+        return np.asarray(self.sfq[idx, :] 
+                if stype=='s' else self.cfq[idx, :])
 
 
 
