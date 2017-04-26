@@ -10,7 +10,7 @@ import numpy as np
 
 
 extensions = [
-    Extension('plag._plag', ['cython/plag.pyx'],
+    Extension('plag._plag', ['cython/_plag.pyx'],
         include_dirs = [np.get_include()],
         libraries = [],
         library_dirs = [],
