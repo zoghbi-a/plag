@@ -28,7 +28,7 @@ class plagCythonTest(unittest.TestCase):
         m = plag._plag.PLagBase(t, t, t, 1.0, 1)
         tu, iu = np.unique(t[:,None]-t[None,:], return_inverse=1)
         assert(m.nU == len(tu))
-        
+
         cov = m._get_cov_matrix(np.array([1.]))
 
         # cov-related arrays #
@@ -40,5 +40,6 @@ class plagCythonTest(unittest.TestCase):
         # cov-matrix #
         np.testing.assert_array_almost_equal(np.zeros((4, 4)) * 1.0, cov)
 
+    
 
 

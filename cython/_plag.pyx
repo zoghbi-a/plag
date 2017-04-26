@@ -1,6 +1,9 @@
 
 import numpy as np
 cimport numpy as np
+cimport scipy.linalg.cython_lapack as lapack
+cimport scipy.linalg.cython_blas as blas
+from libc.math cimport log, sin, cos, fabs, sqrt, pow, M_PI, exp
 
 
 cdef class PLagBase:
@@ -99,6 +102,92 @@ cdef class PLagBase:
 
 
 
+    cdef add_measurement_noise(self, double[:] params):
+        """Add measurement noise to the covariance matrix.
+            self.Cov will be modified (usually just the diagonal)
+
+        Args:
+            params: array in model parameters in case it is 
+                needed
+
+
+        """
+        cdef int i, n = self.n
+        cdef double* Cov = &self.Cov[0,0]
+
+        for i in range(n): Cov[i*n+i] += self.ye2[i]
+
+
+
+    cpdef double logLikelihood(self, double[:] params, int icov, int inv):
+        """Calculate the log Likelihood for given model params
+        
+        Args:
+            params: parameters of the model
+            icov: if not 0, calculate the covariance matrix.
+                Otherwise, assume it has already been calculated
+                and stored in self.Cov. It is calculated only
+                if called from DlnLikelihood
+            inv: if > 0, also calculate the inverse of the
+                covariance matrix. It is not needed for the
+                logLikelihood, but it is needed when doing the
+                derivative. If requested, it will be stored in 
+                self.Cov.
+                If == 0, just do the likelihood calculation.
+                If < 0, store the residuals in the diagonal elements
+                    of self.Cov
+
+        Returns:
+            log likelihood value
+
+        """
+
+        ## covariance matrix ##
+        cdef double* Cov = &self.Cov[0,0]
+        if icov != 0:
+            self.Covariance(params)
+
+
+        ## define some variables ##
+        cdef:
+            int i, n = self.n, info, nrhs = 1
+            double[::1] tmp_x, tmp_y = np.array(self.yarr)
+            double chi2, logDet = 0
+            double* yarr = &self.yarr[0]
+
+        # observation error #
+        self.add_measurement_noise(params)
+
+
+
+        ## Cholesky Factor ##
+        lapack.dpotrf('L', &n, Cov, &n, &info)
+        if info: return -np.inf
+
+        #-- Determinant --#
+        for i in range(n): logDet += log(Cov[i+n*i])
+        logDet *= 2
+        if inv < 0:
+            tmp_x = np.zeros(n, np.double)
+            for i in range(n): tmp_x[i] = Cov[i+n*i]**2
+
+        # --chi2 = x^T C x --#
+        lapack.dpotrs('L', &n, &nrhs, Cov, &n, &tmp_y[0], &n, &info)
+        chi2 = blas.ddot(&n, yarr, &nrhs, &tmp_y[0], &nrhs)
+        if inv < 0:
+            for i in range(n):
+                Cov[i+n*i] = tmp_y[i] * yarr[i] * tmp_x[i]
+
+        #-- invert C? --#
+        if inv > 0:
+            lapack.dpotri('L', &n, Cov, &n, &info)
+
+        #-- loglikelihood --#
+        logLike = -0.5 * ( chi2 + logDet + n*log(2*M_PI) )
+        return logLike
+
+
+
     def _get_cov_arrays(self):
         """Returns the covariance-related arrays.
             To be called by python for testing
@@ -124,4 +213,7 @@ cdef class PLagBase:
 
         self.Covariance(np.array(pars, np.double))
         return np.asarray(self.Cov)
+
+
+
 
