@@ -365,4 +365,77 @@ cdef class PLagBin(PLagBase):
 
 
 
+cdef class psd(PLagBin):
+    """Class for calculating PSD at pre-defined frequency bins"""
+    
+    # global parameters #
+    cdef:
+        double norm
+        int do_sig
 
+
+    def __init__(self, 
+            np.ndarray[dtype=np.double_t, ndim=1] t,
+            np.ndarray[dtype=np.double_t, ndim=1] y, 
+            np.ndarray[dtype=np.double_t, ndim=1] ye, 
+            double dt, double[:] fqL, int inorm, int do_sig):
+        """Calculate psd at predefined frequency bins.
+            if do_sig==1, then the model parameters are the 
+            psd values (in log units) in the frequency bins 
+            (i.e. len(fqL)-1 of them). If do_sig == 0,
+            then the first parameter is the sig2_factor
+            and the rest are the psd values.
+
+        Args:
+            t: array of time axis
+            y: array of rate values corresponding to t
+            ye: 1-sigma measurement error in r
+            dt: time sampling of the data
+            fqL: frequency bin boundaries
+            inorm: normalization type. 0:var, 1:leahy, 2:rms
+            do_sig: if == 1, include a parameter that multiplies
+                the measurement errors
+
+        """
+        cdef int npar = fqL.shape[0] - 1
+        if do_sig == 1: npar += 1
+        PLagBin.__init__(self, t, y, ye, dt, npar, fqL)
+        self.norm = self.mu**inorm
+        self.do_sig = do_sig
+
+    
+    cdef covariance_kernel(self, double[:] params):
+        """Calculate the covariance kernel at covariance lags.
+            It takes in the model parameters
+            as input, and calculates the covariance at lags
+            defined in self.tU.
+
+
+        Args:
+            params: parameters of the model
+
+        The results are written to self.cU
+
+        """
+        cdef:
+            int iu, k, k0, nfq = self.nfq
+            double res, norm = self.norm
+        k0 = 1 if self.do_sig else 0
+
+        for iu in range(self.nU):
+            res = 0
+            for k in range(nfq):
+                res += exp(params[k+k0]) * self.cfq[k, iu] * norm
+            self.cU[iu] = res
+
+
+    cdef add_measurement_noise(self, double[:] params):
+        """see @PLagBase.add_measurement_noise
+        """
+        cdef:
+            int i, n = self.n
+            double* Cov = &self.Cov[0,0]
+            double* sig2 = &self.sig2[0]
+            double fac = 1.0
+        if self.do_sig: fac = exp(params[0])
+        for i in range(n): Cov[i*n+i] += fac*sig2[i]

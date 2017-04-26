@@ -133,3 +133,57 @@ class plagCythonTest(unittest.TestCase):
         np.testing.assert_array_almost_equal(su2, p._get_integrals('s', 1))
 
 
+    def test_psd_init(self):
+        """Test the initialization of psd
+        """
+        t = np.arange(4, dtype=np.double)
+        fqL = np.array([0.25,0.5])
+        p = plag._plag.psd(t, t, t, 1.0, fqL, 1, 0)
+        assert(p.n == 4)
+        assert(p.mu == np.sum(t)/4)
+        assert(p.nfq == 1)
+        assert(p.npar == 1)
+
+        # do_sig=1 #
+        p = plag._plag.psd(t, t, t, 1.0, fqL, 1, 1)
+        assert(p.npar == 2)
+
+
+    def test_psd_logLikelihood(self):
+        """Test that logLikelihood of psd runs
+        """
+        n = 12
+        t = np.arange(n, dtype=np.double)
+        fqL = np.array([1./12,0.5])
+        x = np.random.randn(n) + 4
+        p = plag._plag.psd(t, x, x*0+0.1, 1.0, fqL, 1, 0)
+        inp = np.array([1.])
+        l1 = p.logLikelihood(inp, 1, 0)
+        assert(np.isfinite(l1))
+
+        # do_sig=1, and log_factor = 0.0
+        p = plag._plag.psd(t, x, x*0+0.1, 1.0, fqL, 1, 1)
+        inp = np.array([0., 1.])
+        assert(l1 == p.logLikelihood(inp, 1, 0))
+
+
+    def test_psd_norm(self):
+        """Test that logLikelihood of psd runs
+        """
+        n = 12
+        t = np.arange(n, dtype=np.double)
+        fqL = np.array([1./12,0.5])
+        x = np.random.randn(n) + 4
+
+        p0 = plag._plag.psd(t, x, x*0+0.1, 1.0, fqL, 0, 0)
+        p1 = plag._plag.psd(t, x, x*0+0.1, 1.0, fqL, 1, 0)
+        p2 = plag._plag.psd(t, x, x*0+0.1, 1.0, fqL, 2, 0)
+
+        inp = np.array([1.])
+        mu = x.mean()
+        l0 = p0.logLikelihood(inp, 1, 0)
+        l1 = p1.logLikelihood(np.log(np.exp(inp)/mu), 1, 0)
+        l2 = p2.logLikelihood(np.log(np.exp(inp)/mu**2), 1, 0)
+        np.testing.assert_almost_equal(l0, l1, l2)
+
+
