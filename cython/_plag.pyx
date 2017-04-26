@@ -439,3 +439,4 @@ cdef class psd(PLagBin):
             double fac = 1.0
         if self.do_sig: fac = exp(params[0])
         for i in range(n): Cov[i*n+i] += fac*sig2[i]
+
