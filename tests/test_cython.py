@@ -210,6 +210,7 @@ class plagCythonTest(unittest.TestCase):
                     for i in range(1)]
         np.testing.assert_almost_equal(g1,g2)
 
+
     def test_psd_gradient_2(self):
         """Test the gradient from dLogLikelihood
         vs scipy.misc.derivative for psd with do_sig=1

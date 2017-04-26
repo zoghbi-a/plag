@@ -111,7 +111,7 @@ def _get_fqL(tseg):
 
 
 def simulate_psd_cython():
-    """Run a simple plag psd simulation"""
+    """Run a simple plag psd simulation. do_sig=0"""
 
     # input #
     for k in ['norm', 'dt', 'psdpar']:
@@ -151,6 +151,46 @@ def simulate_psd_cython():
     np.savez('psd_cython.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
     
 
+def simulate_psd_cython_2():
+    """Run a simple plag psd simulation. do_sig=1"""
+
+    # input #
+    for k in ['norm', 'dt', 'psdpar']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    def neg_lnlike(p, m):
+        return -m.logLikelihood(p, 1, 0)
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL(T)
+        
+
+        model = plag._plag.psd(T[0], R[0], E[0], dt, fqL, inorm, 1)
+        p0 = np.ones(len(fqL))
+        res = opt.minimize(neg_lnlike, p0, args=(model,), method='L-BFGS-B',
+                bounds=[(-2,2)]+[(-20,20)]*len(fq))
+        sims.append(res.x)
+
+    sims = np.array(sims)
+    sm, ss = sims.mean(0), sims.std(0)
+    sim = _simulate_lc(None, return_sim=1)
+    fm, pm = sim.psd_model[:,1:]
+    ii = np.logical_and(fm>fq[0], fm<fq[-1])
+    fm, pm = fm[ii], pm[ii]
+    plt.semilogx(fm, np.log(pm))
+    plt.errorbar(fq, sm[1:], ss[1:], fmt='o')
+    plt.title(r'$\sigma= {:4.4g}\pm{:4.4g}$'.format(sm[0], ss[0]))
+    plt.savefig('psd_cython_2.png')
+    np.savez('psd_cython_2.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
 
 
 
@@ -163,7 +203,9 @@ if __name__ == '__main__':
     p.add_argument('nsim', type=int, help='number of simulations')
 
     p.add_argument('--psd_cython', action='store_true', default=False,
-            help='Simulate psd')    
+            help='Simulate psd_cython with do_sig=0')
+    p.add_argument('--psd_cython_2', action='store_true', default=False,
+            help='Simulate psd_cython with do_sig=1')     
 
 
     args = p.parse_args()
@@ -172,3 +214,6 @@ if __name__ == '__main__':
     ## psd ##
     if args.psd_cython:
         simulate_psd_cython()
+
+    if args.psd_cython_2:
+        simulate_psd_cython_2()
