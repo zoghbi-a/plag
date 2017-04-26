@@ -26,9 +26,11 @@ cdef class PLagBase:
         public int n, npar, nU
         public double dt, mu
         double[::1] yarr, sig2
-        double[::1,:] Cov
         double[::1] tU, cU
         long[::1] iU
+        double[::1,:] Cov, dCov
+        double[::1,:] yyT, yyTmC, CidCCi
+        double[::1,:,:] CidC
 
 
 
@@ -72,6 +74,16 @@ cdef class PLagBase:
         self.nU = self.tU.shape[0]
         self.Cov = np.empty((n, n), np.double, 'F')
 
+        # for derivatives #
+        self.dCov = np.empty((n, n), np.double, 'F')
+        self.yyT = np.empty((n, n), np.double, 'F')
+        self.yyTmC = np.empty((n, n), np.double, 'F')
+        self.CidCCi = np.empty((n, n), np.double, 'F')
+        self.CidC = np.empty((n, n, npar), np.double, 'F')
+
+        for i in range(n):
+            for j in range(n): self.yyT[i, j] = self.yarr[i]*self.yarr[j]
+
 
 
     cdef covariance_kernel(self, double[:] params):
@@ -87,6 +99,25 @@ cdef class PLagBase:
 
         The results are written to self.cU
         
+        """
+        self.cU[:] = 0
+
+
+    
+    cdef covariance_kernel_deriv(self, double[:] params, int ik):
+        """Calculate the covariance kernel derivative with 
+            respect to parameter num ik at covariance lags. 
+            This function is meant to be inherited by child 
+            classes. It takes in the model parameters as input, 
+            and calculate the covariance derivative with respect
+            to parameter number ik at lags defined self.tU.
+
+
+        Args:
+            params: parameters of the model
+            ik: parameter number with respect to which we
+                calculate the derivative (0-based) 
+
         """
         self.cU[:] = 0
 
@@ -109,6 +140,29 @@ cdef class PLagBase:
         self.covariance_kernel(params)  
         for i in range(n*n):
             Cov[i] = self.cU[self.iU[i]]
+
+
+
+    cdef dCovariance(self, double[:] params, int ik):
+        """Calculate the derivative of the covariance matrix 
+            by calling covariance_kernel_deriv and constructing 
+            the matrix
+
+        Args:
+            params: parameters of the model
+            ik: parameter number with respect to which
+                we take the derivative
+
+        The result is written to self.dCov
+
+        """
+        cdef:
+            int i, n=self.n, nU = self.nU
+            double* dCov = &self.dCov[0,0]
+
+        self.covariance_kernel_deriv(params, ik)    
+        for i in range(n*n):
+            dCov[i] = self.cU[self.iU[i]]
 
 
 
@@ -198,6 +252,64 @@ cdef class PLagBase:
         #-- loglikelihood --#
         logLike = -0.5 * ( chi2 + logDet + n*log(2*M_PI) )
         return logLike
+
+
+
+    def dLogLikelihood(self, double[:] params):
+        """Calculate the logLikelihood gradient and Hessian
+            for input parameters params
+        
+        Args:
+            params: parameters of the model
+            
+
+        Returns:
+            logLikelihood, gradient_arrat, hessian_matrix
+
+
+        """
+
+        cdef:
+            int i, j, k, l, n = self.n, npar = self.npar
+            double logLike
+            double alpha = 1, beta = 0, g, h
+            double[:]   grad = np.empty(npar, np.double)
+            double[:,:] hess = np.empty((npar,npar), np.double)
+
+        # get covariance matrix and yyTmC before #
+        # Cov is messed up in the factorization  #
+        self.Covariance(params)
+        for i in range(n):
+            for j in range(n): 
+                self.yyTmC[i, j] = self.yyT[i, j] - self.Cov[i, j]
+            self.yyTmC[i, i] -= self.sig2[i]
+
+        # logLikelihood #
+        logLike = self.logLikelihood(params, 0, 1)
+
+        ## -- calculate grad and hess following Bond+1998 -- ##
+        for k in range(npar):
+            self.dCovariance(params, k)
+            blas.dsymm('L', 'L', &n, &n, &alpha, &self.Cov[0,0],
+                &n, &self.dCov[0,0], &n, &beta, &self.CidC[0,0,k], &n)
+            blas.dsymm('R', 'L', &n, &n, &alpha, &self.Cov[0,0] ,
+                &n, &self.CidC[0,0,k], &n, &beta, &self.CidCCi[0,0], &n)
+            g = 0
+            for i in range(n):
+                g += self.yyTmC[i,i]*self.CidCCi[i,i]
+                for j in range(i):
+                    g += 2*self.yyTmC[i,j]*self.CidCCi[j,i]
+            grad[k] = 0.5*g
+
+        for k in range(npar):
+            for l in range(k+1):
+                h = 0
+                for i in range(n):
+                    for j in range(n):
+                        h += self.CidC[i,j,k] * self.CidC[j,i,l]
+                hess[k,l] = 0.5*h
+                hess[l,k] = 0.5*h
+        return logLike, np.asarray(grad), np.asarray(hess)
 
 
 
@@ -439,4 +551,44 @@ cdef class psd(PLagBin):
             double fac = 1.0
         if self.do_sig: fac = exp(params[0])
         for i in range(n): Cov[i*n+i] += fac*sig2[i]
+
+
+    cdef covariance_kernel_deriv(self, double[:] params, int ik):
+        """Calculate the covariance kernel derivative with 
+            respect to parameter num ik at covariance lags. 
+            It takes in the model parameters as input, 
+            and calculate the covariance derivative with respect
+            to parameter number ik at lags defined self.tU.
+
+
+        Args:
+            params: parameters of the model
+            ik: parameter number with respect to which we
+                calculate the derivative (0-based) 
+
+        """
+        cdef:
+            int iu, k, k0, nfq = self.nfq
+            double res, norm = self.norm
+        k0 = 1 if self.do_sig else 0
+
+        if self.do_sig and ik==0:
+            self.cU[:] = 0.
+        else:
+            for iu in range(self.nU):
+                self.cU[iu] = exp(params[ik]) * self.cfq[ik-k0, iu] * norm
+
+
+    cdef dCovariance(self, double[:] params, int ik):
+        """see @PLagBase.dCovariance"""
+        cdef:
+            int i, n = self.n
+            double* dCov = &self.dCov[0,0]
+            double* sig2 = &self.sig2[0]
+
+        if self.do_sig and ik==0:
+            self.dCov[:, :] = 0
+            for i in range(n): dCov[i*n+i] = exp(params[0])*sig2[i]
+        else:
+            PLagBin.dCovariance(self, params, ik)
 

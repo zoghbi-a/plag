@@ -187,3 +187,74 @@ class plagCythonTest(unittest.TestCase):
         np.testing.assert_almost_equal(l0, l1, l2)
 
 
+    def test_psd_gradient_1(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psd
+        """
+        np.random.seed(3094)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([1.])
+        p = plag._plag.psd(t, x, xe, dt, fqL, 0, 0)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(1)]
+        np.testing.assert_almost_equal(g1,g2)
+
+    def test_psd_gradient_2(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psd with do_sig=1
+        """
+        np.random.seed(3094)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0., 1.])
+        p = plag._plag.psd(t, x, xe, dt, fqL, 0, 1)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(2)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psd_gradient_3(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psd with do_sig=1, and inorm=2
+        """
+        np.random.seed(3094)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0., 1.])
+        p = plag._plag.psd(t, x, xe, dt, fqL, 2, 1)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(2)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
