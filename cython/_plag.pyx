@@ -593,3 +593,126 @@ cdef class psd(PLagBin):
         else:
             PLagBin.dCovariance(self, params, ik)
 
+
+
+cdef double _psdf__pl(double fq, double[:] pars):
+    """Power law model with pars = [norm, index]
+    """
+    return exp(pars[0]) * fq**pars[1]
+
+
+cdef class psdf(PLagBin):
+    """Class for fitting functions directly to the psd"""
+
+    # global parameters #
+    cdef:
+        double norm
+        double (*fmodel) (double, double[:])
+        double[:] fq
+        int NFQ, do_sig
+
+
+    def __init__(self, 
+            np.ndarray[dtype=np.double_t, ndim=1] t,
+            np.ndarray[dtype=np.double_t, ndim=1] y, 
+            np.ndarray[dtype=np.double_t, ndim=1] ye, 
+            double dt, double[:] fqL, int inorm, int do_sig, 
+            int ifunc, int NFQ):
+        """Model psd using pre-defined functions.
+            The integration is approximated by NFQ bins.
+            fqL here has two elements, taken as the limit
+            of the integration
+
+        Args:
+            t: array of time axis
+            y: array of rate values corresponding to t
+            ye: 1-sigma measurement error in r
+            dt: time sampling of the data
+            fqL: frequency bin boundaries of length 2
+            inorm: normalization type. 0:var, 1:leahy, 2:rms
+            do_sig: if == 1, include a parameter that multiplies
+                the measurement errors
+            ifunc: int indicating what functional form to use
+            NFQ: how many points to use to approximate the integration
+
+        """
+        cdef:
+            int npar, i
+            double[:] FQL
+        FQL = np.logspace(np.log10(fqL[0]), np.log10(fqL[1]), NFQ)
+
+        self.fq = 10**((np.log10(FQL[1:]) + np.log10(FQL[:-1]))/2.)
+
+        npar = self._identify_function(ifunc)
+        if do_sig == 1: npar += 1
+
+        PLagBin.__init__(self, t, y, ye, dt, npar, FQL)
+        self.norm = self.mu**inorm
+        self.NFQ = NFQ
+        self.do_sig = do_sig
+    
+
+    cdef int _identify_function(self, int ifunc):
+        """Given the choice of ifunc, choose the psd
+            function
+
+        Args:
+            ifunc: int. identifying the function
+
+        Returns:
+            number of parameters
+
+        """
+
+        if ifunc == 1:
+            self.fmodel = &_psdf__pl
+            return 2
+
+
+    cdef covariance_kernel(self, double[:] params):
+        """
+        params are: fmodel_params
+        """
+        cdef:
+            int iu, k, k0, nfq = self.nfq
+            double res, dum, norm = self.norm
+        k0 = 1 if self.do_sig else 0
+
+        for iu in range(self.nU):
+            res = 0
+            for k in range(nfq):
+                dum = self.fmodel(self.fq[k], params[k0:])
+                res += dum * self.cfq[k, iu]
+            self.cU[iu] = res * norm
+
+
+    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
+        """see @PLagBase.add_measurement_noise
+        """
+        cdef:
+            int i, n = self.n
+            double* sig2 = &self.sig2[0]
+            double fac = 1.0
+        if self.do_sig: fac = exp(params[0])
+        for i in range(n): arr[i*n+i] += sign*fac*sig2[i]
+
+
+
+    def calculate_model(self, params):
+        """Calculate model for the given parameters
+            at the frequencies of used internally
+
+        Called from python and not from here
+
+        """
+        cdef:
+            int k0
+            double[:] p
+        k0 = 1 if self.do_sig else 0
+        p = np.array(params[k0:])
+        model = np.array([self.fmodel(self.fq[k], p)*self.norm
+                    for k in range(self.nfq)])
+        return np.asarray(self.fq), model
+
+
+

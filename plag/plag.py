@@ -376,3 +376,5 @@ def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
         print(' '.join(['{:4g}'.format(x) for x in g]))
         print('*'*20)
     return p, pe, l
+
+

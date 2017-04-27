@@ -194,6 +194,92 @@ def simulate_psd_cython_2():
 
 
 
+def simulate_psdf_cython():
+    """Run a simple plag psdf simulation. do_sig=0; ifunc=1"""
+
+    # input #
+    for k in ['norm', 'dt', 'psdpar']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    def neg_lnlike(p, m):
+        return -m.logLikelihood(p, 1, 0)
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL(T)
+        fqL = fqL[[0,-1]]
+        
+
+        
+        model = plag._plag.psdf(T[0], R[0], E[0], dt, fqL, inorm, 0, 1, 50)
+        p0 = np.array([1., 1.])
+        res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        sims.append(res.x)
+    sims = np.array(sims)
+    smod = np.array([model.calculate_model(s) for s in sims])
+    fs = smod[0,0]
+    ms, ss = smod[:,1].mean(0), smod[:,1].std(0)
+    sim = _simulate_lc(None, return_sim=1)
+    fm, pm = sim.psd_model[:,1:]
+    ii = np.logical_and(fm>fqL[0], fm<fqL[-1])
+    fm, pm = fm[ii], pm[ii]
+    plt.semilogx(fm, np.log(pm), lw=4)
+    plt.fill_between(fs, np.log(ms-ss), np.log(ms+ss), alpha=0.4)
+    plt.savefig('psdf_cython.png')
+    np.savez('psdf_cython.npz', sims=sims, fqL=fqL, sim_input=sim_input, smod=smod)
+
+
+def simulate_psdf_cython_2():
+    """Run a simple plag psdf simulation. do_sig=1; ifunc=1"""
+
+    # input #
+    for k in ['norm', 'dt', 'psdpar']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    def neg_lnlike(p, m):
+        return -m.logLikelihood(p, 1, 0)
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL(T)
+        fqL = fqL[[0,-1]]
+        
+
+        
+        model = plag._plag.psdf(T[0], R[0], E[0], dt, fqL, inorm, 1, 1, 50)
+        p0 = np.array([0., .1, -2.])
+        res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        sims.append(res.x)
+    sims = np.array(sims)
+    smod = np.array([model.calculate_model(s) for s in sims])
+    fs = smod[0,0]
+    ms, ss = smod[:,1].mean(0), smod[:,1].std(0)
+    sim = _simulate_lc(None, return_sim=1)
+    fm, pm = sim.psd_model[:,1:]
+    ii = np.logical_and(fm>fqL[0], fm<fqL[-1])
+    fm, pm = fm[ii], pm[ii]
+    plt.semilogx(fm, np.log(pm), lw=4)
+    plt.fill_between(fs, np.log(ms-ss), np.log(ms+ss), alpha=0.4)
+    plt.savefig('psdf_cython_2.png')
+    np.savez('psdf_cython_2.npz', sims=sims, fqL=fqL, sim_input=sim_input, smod=smod)
+
+
 if __name__ == '__main__':
 
     p = argparse.ArgumentParser(                                
@@ -206,7 +292,10 @@ if __name__ == '__main__':
             help='Simulate psd_cython with do_sig=0')
     p.add_argument('--psd_cython_2', action='store_true', default=False,
             help='Simulate psd_cython with do_sig=1')     
-
+    p.add_argument('--psdf_cython', action='store_true', default=False,
+            help='Simulate psdf_cython with do_sig=0')
+    p.add_argument('--psdf_cython_2', action='store_true', default=False,
+            help='Simulate psdf_cython with do_sig=1')
 
     args = p.parse_args()
 
@@ -217,3 +306,13 @@ if __name__ == '__main__':
 
     if args.psd_cython_2:
         simulate_psd_cython_2()
+
+    if args.psdf_cython:
+        simulate_psdf_cython()
+
+    if args.psdf_cython_2:
+        simulate_psdf_cython_2()
+
+
+
+
