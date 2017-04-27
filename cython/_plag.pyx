@@ -166,23 +166,22 @@ cdef class PLagBase:
 
 
 
-    cdef add_measurement_noise(self, double[:] params):
+    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
         """Add measurement noise to the covariance matrix.
             self.Cov will be modified (usually just the diagonal)
 
         Args:
             params: array in model parameters in case it is 
                 needed
+            arr: a pointer to a (n,n) whose diagonals are to be modified
+            sign: +1,-1 for add or subtract from the diagonal
 
 
         """
         cdef:
             int i, n = self.n
-            double* Cov = &self.Cov[0,0]
             double* sig2 = &self.sig2[0]
-
-
-        for i in range(n): Cov[i*n+i] += sig2[i]
+        for i in range(n): arr[i*n+i] += sign*sig2[i]
 
 
 
@@ -223,7 +222,7 @@ cdef class PLagBase:
             double* yarr = &self.yarr[0]
 
         # observation error #
-        self.add_measurement_noise(params)
+        self.add_measurement_noise(params, Cov, 1)
 
 
 
@@ -282,7 +281,8 @@ cdef class PLagBase:
         for i in range(n):
             for j in range(n): 
                 self.yyTmC[i, j] = self.yyT[i, j] - self.Cov[i, j]
-            self.yyTmC[i, i] -= self.sig2[i]
+        self.add_measurement_noise(params, &self.yyTmC[0,0], -1)
+            
 
         # logLikelihood #
         logLike = self.logLikelihood(params, 0, 1)
@@ -541,16 +541,15 @@ cdef class psd(PLagBin):
             self.cU[iu] = res
 
 
-    cdef add_measurement_noise(self, double[:] params):
+    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
         """see @PLagBase.add_measurement_noise
         """
         cdef:
             int i, n = self.n
-            double* Cov = &self.Cov[0,0]
             double* sig2 = &self.sig2[0]
             double fac = 1.0
         if self.do_sig: fac = exp(params[0])
-        for i in range(n): Cov[i*n+i] += fac*sig2[i]
+        for i in range(n): arr[i*n+i] += sign*fac*sig2[i]
 
 
     cdef covariance_kernel_deriv(self, double[:] params, int ik):
@@ -569,14 +568,15 @@ cdef class psd(PLagBin):
         """
         cdef:
             int iu, k, k0, nfq = self.nfq
-            double res, norm = self.norm
+            double res, norm = self.norm, p
         k0 = 1 if self.do_sig else 0
 
         if self.do_sig and ik==0:
             self.cU[:] = 0.
         else:
+            p = exp(params[ik]) * norm
             for iu in range(self.nU):
-                self.cU[iu] = exp(params[ik]) * self.cfq[ik-k0, iu] * norm
+                self.cU[iu] = p * self.cfq[ik-k0, iu]
 
 
     cdef dCovariance(self, double[:] params, int ik):
@@ -588,7 +588,8 @@ cdef class psd(PLagBin):
 
         if self.do_sig and ik==0:
             self.dCov[:, :] = 0
-            for i in range(n): dCov[i*n+i] = exp(params[0])*sig2[i]
+            self.add_measurement_noise(params, dCov, 1)
+            #for i in range(n): dCov[i*n+i] = exp(params[0])*sig2[i]
         else:
             PLagBin.dCovariance(self, params, ik)
 

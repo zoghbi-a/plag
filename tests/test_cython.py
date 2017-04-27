@@ -221,7 +221,7 @@ class plagCythonTest(unittest.TestCase):
         x = np.random.randn(n)*2 + 4
         xe = x*0+0.01
         fqL = np.array([0.25,0.5])
-        inpars = np.array([0., 1.])
+        inpars = np.array([2., 0.])
         p = plag._plag.psd(t, x, xe, dt, fqL, 0, 1)
         logLike1, g1, h = p.dLogLikelihood(inpars)
 

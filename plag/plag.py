@@ -263,6 +263,116 @@ class psd(PLagCython):
 
     def step_param(self, par, dpar):
         __doc__ = super(self.__class__, self).step_param.__doc__
+        dpar = np.clip(dpar, -2, 2)
         p = par + dpar
         p = np.clip(p, -20, 20)
         return p
+
+
+
+
+def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
+    """Simple optimization routine that uses the
+        Quadaratic approximation. From the calculated gradient 
+        and Hessian, a stepping vector is
+        created and used to nagivate the parameters space.
+        It seems to work better that the scipy.optimize.minimize,
+        but this may depend on the problem at hand.
+
+        WARNING :: This is my simple implementation and it is error-prone
+            check the results, and use at you own risk.
+
+    Args:
+        mod: the model whose logLikelihood function is to be maximized.
+            It is assumed of course that there is a function
+            mod.dLogLikelihood to calculate the logLikelihood values,
+            gradient and Hessian for a given set of prameters.
+        p0: a list or array of the initial values of the model parameters.
+            To ensure convergence, this need to be close enough to the real
+            solution, particularly for the cross-spec/lag models.
+        ip_fix: indices of parameters to keep fixed duing the optimization.
+                This is 0-based.
+        maxiter: maximum number of search iterations before it is considered
+            a failor. The convergence usally happens in less than a few tens
+            of iterations unless the model is very complicated and the data
+            quality is not good.
+        tol: what is the tolerance for convergence. We check three parameters
+            if ANY of them has an absolote value < tol, we consider this a 
+            convergence. The parameters are:
+                -absmax: max of abs(dpar/par)
+                -gmax: max of abs(gradient)
+                -dfun: change in logLikelihood between iterations.
+        verbose: print verbosity.
+
+
+    Returns:
+        p, pe, l: the best fit parameter values and their ESTIMATED errors
+            from the Hessian matrix, and the value of the loglikelihood.
+            The errors are NOT to be taken seriously. They are usually 
+            underestimated. Run @error for a more correct error estimates
+            or mcmc.
+
+    """
+    tmpp  = np.array(p0, np.double)
+    dpar  = tmpp*1e-3
+    prev  = [-np.inf, tmpp]
+    gzero = 1e-5
+    npar  = len(p0)
+    nloop = 0
+
+    hinv   = np.zeros((npar,npar)) + 1e16
+
+    for niter in range(1, maxiter+1):
+        l, g, h = mod.dLogLikelihood(tmpp)
+        
+        if not np.isfinite(l):
+            dpar   /= 10.
+            l, tmpp = prev
+            tmpp    = mod.step_param(tmpp, dpar)
+            continue
+
+        ## -- handle constants -- ##
+        ivar   = np.argwhere(np.abs(g)>gzero)[:,0]
+        if len(ivar) == 0: ivar = np.arange(npar)
+        if ip_fix is not None:
+            if not isinstance(ip_fix, list): ip_fix = [ip_fix]
+            ivar = [i for i in ivar if i not in ip_fix]
+        jvar   = [[i] for i in ivar]
+        hinv_  = np.linalg.inv(h[ivar, jvar])
+        dpar_  = np.dot(hinv_, g[ivar])
+        dpar   = np.zeros(npar)
+        dpar[ivar] = dpar_
+        hinv   = np.zeros((npar,npar)) + 1e16
+        hinv[ivar, jvar] = hinv_
+        ## ---------------------- ##
+
+
+        absmax = np.max(np.abs(dpar/tmpp))
+        gmax   = np.max(np.abs(g))
+        dfun   = l-prev[0]
+
+        if verbose:
+            print('{:4} {:5.3e} {:5.3e} {:5.3e} | {:5.3e} | {}'.format(
+                niter, absmax, gmax, dfun, l, 
+                ' '.join(['{:5.3g}'.format(x) for x in tmpp])))
+        
+        if absmax<tol or gmax<tol or np.abs(dfun)<tol: break
+        prev   = [l, tmpp]
+        
+        # if we are stuck in a loop, disturb the solution a bit #
+        if dfun<0: nloop += 1
+        if nloop>10: dpar /= 2.
+
+        tmpp   = mod.step_param(tmpp, dpar)
+    p, pe = tmpp, np.sqrt(np.diagonal(hinv))
+
+    ## used when calculating errors ##
+    if ip_fix is not None: return p, pe, l
+    ## ---------------------------- ##
+    if verbose:
+        print('*'*20)
+        print(' '.join(['{:4g}'.format(x) for x in p]))
+        print(' '.join(['{:4g}'.format(x) for x in pe]))
+        print(' '.join(['{:4g}'.format(x) for x in g]))
+        print('*'*20)
+    return p, pe, l
