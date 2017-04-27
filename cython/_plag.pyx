@@ -600,6 +600,36 @@ cdef double _psdf__pl(double fq, double[:] pars):
     """
     return exp(pars[0]) * fq**pars[1]
 
+cdef double _psdf__bpl(double fq, double[:] pars):
+    """Bending Power law model with pars = [norm, index, bend]
+    """
+    cdef double a, b, c
+    a = exp(pars[0]) # norm
+    b = pars[1] # index
+    c = exp(pars[2]) #  break
+    return (a/fq) * (1 + (fq/c)**(-b-1))**(-1)
+
+cdef double _psdf__lor(double fq, double[:] pars):
+    """Lorentzian model with pars = [norm, fq_center, fq_sigma]
+    """
+    cdef double a, b, c
+    a = exp(pars[0]) # norm
+    b = exp(pars[1]) # fq_center
+    c = exp(pars[2]) #  fq_sigma
+    return a * (c/(2*M_PI)) / ( (fq-b)**2 + (c/2)**2 )
+
+cdef double _psdf__plor(double fq, double[:] pars):
+    """PL + lore: pnorm, pindex, l_norm, l_cent, l_sigm"""
+    return _psdf__pl(fq, pars[:2]) + _psdf__lor(fq, pars[2:])
+
+cdef double _psdf__2bpl(double fq, double[:] pars):
+    """BPL + BPL: [norm, index, bend]_1 [norm, index, bend]_2"""
+    return _psdf__bpl(fq, pars[:3]) + _psdf__lor(fq, pars[3:])
+
+cdef double _psdf__2lor(double fq, double[:] pars):
+    """Lor+Lor: [norm, fq_c, fq_w]_1 [norm, fq_c, fq_w]_2"""
+    return _psdf__lor(fq, pars[:3]) + _psdf__lor(fq, pars[3:])
+
 
 cdef class psdf(PLagBin):
     """Class for fitting functions directly to the psd"""
@@ -667,6 +697,21 @@ cdef class psdf(PLagBin):
         if ifunc == 1:
             self.fmodel = &_psdf__pl
             return 2
+        elif ifunc == 2:
+            self.fmodel = &_psdf__bpl
+            return 3
+        elif ifunc == 3:
+            self.fmodel = &_psdf__lor
+            return 3
+        elif ifunc == 13:
+            self.fmodel = &_psdf__plor
+            return 5
+        elif ifunc == 22:
+            self.fmodel = &_psdf__2bpl
+            return 6
+        elif ifunc == 33:
+            self.fmodel = &_psdf__2lor
+            return 6
 
 
     cdef covariance_kernel(self, double[:] params):

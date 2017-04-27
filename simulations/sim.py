@@ -280,6 +280,63 @@ def simulate_psdf_cython_2():
     np.savez('psdf_cython_2.npz', sims=sims, fqL=fqL, sim_input=sim_input, smod=smod)
 
 
+def simulate_psdf_cython_3():
+    """Run a simple plag psdf simulation. do_sig=0; ifunc=13
+        PL + LOR
+    """
+
+    # input #
+    for k in ['n', 'dt', 'mean', 'norm', 'gnoise', 'seglen']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+    psdpar = [['powerlaw', [1., -2]], ['lorentz', [50, 8e-2, 3e-2]]]
+    sim = az.SimLc(seed=None)
+    sim.add_model(*psdpar[0])
+    sim.add_model(psdpar[1][0], psdpar[1][1], clear=False)
+
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    def neg_lnlike(p, m):
+        return -m.logLikelihood(p, 1, 0)
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        sim.simulate(16*n, dt/4, mean, norm)
+        r = sim.x[4*n:8*n].reshape((n, 4)).mean(1)
+        t = sim.t[4*n:8*n].reshape((n, 4)).mean(1)
+        r += np.random.randn(n)*gnoise
+        e = np.ones(n)*gnoise
+        R, idx = az.misc.split_array(r, seglen, index=True)
+        T = [t[i] for i in idx]
+        E = [e[i] for i in idx]
+
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL(T)
+        fqL = fqL[[0,-1]]
+        
+
+        model = plag._plag.psdf(T[0], R[0], E[0], dt, fqL, inorm, 0, 13, 50)
+        p0 = np.array([0.1, -2, 3, -2.5, -3.5])
+        res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        sims.append(res.x)
+    sims = np.array(sims)
+    smod = np.array([model.calculate_model(s) for s in sims])
+    fs = smod[0,0]
+    ms, ss = smod[:,1].mean(0), smod[:,1].std(0)
+
+    fm, pm = sim.psd_model[:,1:]
+    ii = np.logical_and(fm>fqL[0], fm<fqL[-1])
+    fm, pm = fm[ii], pm[ii]
+    plt.semilogx(fm, np.log(pm), lw=4)
+    plt.fill_between(fs, np.log(ms-ss), np.log(ms+ss), alpha=0.4)
+    plt.savefig('psdf_cython_3.png')
+    np.savez('psdf_cython_3.npz', sims=sims, fqL=fqL, sim_input=sim_input, smod=smod)
+
 if __name__ == '__main__':
 
     p = argparse.ArgumentParser(                                
@@ -296,6 +353,8 @@ if __name__ == '__main__':
             help='Simulate psdf_cython with do_sig=0')
     p.add_argument('--psdf_cython_2', action='store_true', default=False,
             help='Simulate psdf_cython with do_sig=1')
+    p.add_argument('--psdf_cython_3', action='store_true', default=False,
+            help='Simulate psdf_cython with do_sig=0, ifunc=13. PL + LOR')
 
     args = p.parse_args()
 
@@ -313,6 +372,8 @@ if __name__ == '__main__':
     if args.psdf_cython_2:
         simulate_psdf_cython_2()
 
+    if args.psdf_cython_3:
+        simulate_psdf_cython_3()
 
 
 

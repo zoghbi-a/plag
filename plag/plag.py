@@ -268,7 +268,49 @@ class psd(PLagCython):
         p = np.clip(p, -20, 20)
         return p
 
+class psdf(PLagCython):
+    """ PSD Using some pre-defined functions
+    """
 
+    def __init__(self, t, y, ye, dt, fqL, norm='rms', fit_sigma=False, ifunc=1, NFQ=50):
+        """Model the psd with with a function form.
+        The normalization is defined by norm.
+        Optionally, a sigma factor can be included as a fit parameter
+
+        Args:
+            t: np.ndarray of time axis
+            y: np.ndarray of corresponding rates
+            ye: np.ndarray of the 1-sigma measurement errors.
+            dt: time sampling
+            fqL: a list of array of frequency bin boundaries.
+            norm: var|leahy|rms
+            fit_sigma: include a sigma factor an additional free parameter
+            ifunc: a number indicating what function to use.
+                1: powerlaw
+                2: bending powerlaw
+                3: lorentzian with 3 parameters
+                13: PL + lorentzian
+                22: bending PL + bending PL
+                33: lorentzian + lorentzian
+            NFQ: how many frequency bins to use internally to calculate the 
+                integrals
+
+        """
+        inorm = 2
+        if norm == 'var': inorm = 0
+        if norm == 'leahy': inorm = 1
+        do_sig = 1 if fit_sigma else 0
+        super(self.__class__, self).__init__(
+            'psdf', t, y, ye, dt, np.array(fqL, np.double), 
+            inorm, do_sig, ifunc, NFQ)
+
+
+    def step_param(self, par, dpar):
+        __doc__ = super(self.__class__, self).step_param.__doc__
+        dpar = np.clip(dpar, -2, 2)
+        p = par + dpar
+        p = np.clip(p, -20, 20)
+        return p
 
 
 def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
