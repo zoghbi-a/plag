@@ -28,17 +28,20 @@ sim_input = {
     'seglen': 128,
     'infqL' : 6,
     'gnoise': 0.1,
+    'lag'   : 1.0,
+    'phase' : True,
     'fname' : 'sim.lc',
 }
 
 
-def _simulate_lc(seed=34789, return_sim=False):
+def _simulate_lc(seed=34789, return_sim=False, dolag=False):
     """Simulate light curves and split them
         to segments
 
     Args:
         seed: random seed
         return_sim: return SimLC object
+        dolag: do lags too?
 
     Returns:
         t, r, e: where each is a list of arrays
@@ -53,9 +56,17 @@ def _simulate_lc(seed=34789, return_sim=False):
     sim = az.SimLc(seed=seed)
     sim.add_model(*psdpar)
     sim.simulate(16*n, dt/4, mean, norm)
+    if dolag:
+        lag, phase = sim_input['lag'], sim_input['phase']
+        sim.add_model('constant', lag, lag=True)
+        sim.apply_lag(phase)
+
     if return_sim: return sim
+
     r = sim.x[4*n:8*n].reshape((n, 4)).mean(1)
     t = sim.t[4*n:8*n].reshape((n, 4)).mean(1)
+    if dolag:
+        s = sim.y[4*n:8*n].reshape((n, 4)).mean(1)
     if gnoise is None:
         # poisson noise #
         raise NotImplemented
@@ -63,13 +74,21 @@ def _simulate_lc(seed=34789, return_sim=False):
         # gaussian noise #
         r += np.random.randn(n)*gnoise
         e = np.ones(n)*gnoise
+        if dolag:
+            s += np.random.randn(n)*gnoise
     
 
     # split to segments #
     r, idx = az.misc.split_array(r, seglen, index=True)
     t = [t[i] for i in idx]
     e = [e[i] for i in idx] 
+    if dolag: s = [s[i] for i in idx]
 
+
+    if dolag:
+        t = [list(x) for x in zip(t,t)]
+        r = [list(x) for x in zip(r,s)]
+        e = [list(x) for x in zip(e,e)]
     return t, r, e
 
 
@@ -337,6 +356,69 @@ def simulate_psdf_cython_3():
     plt.savefig('psdf_cython_3.png')
     np.savez('psdf_cython_3.npz', sims=sims, fqL=fqL, sim_input=sim_input, smod=smod)
 
+
+
+def simulate_lag_cython():
+    """Run a simple plag psd/lag simulation. do_sig=0"""
+
+    # input #
+    for k in ['norm', 'dt', 'psdpar', 'lag', 'phase']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    def neg_lnlike(p, m):
+        return -m.logLikelihood(p, 1, 0)
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None, dolag=1)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL([t[0] for t in T])
+        
+
+        p0 = np.ones(len(fqL)-1)
+        pm1 = plag._plag.psd(T[0][0], R[0][0], E[0][0], dt, fqL, inorm, 0)
+        pm2 = plag._plag.psd(T[0][1], R[0][1], E[0][1], dt, fqL, inorm, 0)
+        res1 = opt.minimize(neg_lnlike, p0, args=(pm1,), method='L-BFGS-B',
+                bounds=[(-20,20)]*len(fq))
+        res2 = opt.minimize(neg_lnlike, res1.x, args=(pm2,), method='L-BFGS-B',
+                bounds=[(-20,20)]*len(fq))
+
+        c0 = np.concatenate(((res1.x+res2.x)*0.3, fq*0+0.1))
+        cm  = plag._plag.lag(T[0], R[0], E[0], dt, fqL, inorm, 0, res1.x, res2.x)
+        res = opt.minimize(neg_lnlike, c0, args=(cm,), method='Powell')
+        
+        sims.append(np.concatenate((res1.x, res2.x, res.x)))
+
+    sims = np.array(sims)
+    sm, ss = sims.mean(0), sims.std(0)
+    sim = _simulate_lc(None, return_sim=1, dolag=1)
+    fm, pm = sim.psd_model[:,1:]
+    fm, lm = np.array(sim.lag_model)[:,1:]
+    ii = np.logical_and(fm>fq[0], fm<fq[-1])
+    fm, pm, lm = fm[ii], pm[ii], lm[ii]
+    nfq = len(fq)
+
+    ax = plt.subplot(1, 2, 1); ax.set_ylim([-3, 8])
+    plt.semilogx(fm, np.log(pm))
+    plt.errorbar(fq, sm[:nfq], ss[:nfq], fmt='o')
+    plt.errorbar(fq, sm[nfq:2*nfq], ss[nfq:2*nfq], fmt='o')
+    plt.errorbar(fq, sm[2*nfq:3*nfq], ss[2*nfq:3*nfq], fmt='o')
+
+    ax = plt.subplot(1, 2, 2); ax.set_ylim([-3, 3])
+    plt.semilogx(fm, lm)
+    plt.errorbar(fq, sm[3*nfq:], ss[3*nfq:], fmt='o')
+
+    plt.savefig('lag_cython.png')
+    np.savez('lag_cython.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
+
+
+
 if __name__ == '__main__':
 
     p = argparse.ArgumentParser(                                
@@ -355,6 +437,9 @@ if __name__ == '__main__':
             help='Simulate psdf_cython with do_sig=1')
     p.add_argument('--psdf_cython_3', action='store_true', default=False,
             help='Simulate psdf_cython with do_sig=0, ifunc=13. PL + LOR')
+
+    p.add_argument('--lag_cython', action='store_true', default=False,
+            help='Simulate lag_cython with do_sig=0')
 
     args = p.parse_args()
 
@@ -376,4 +461,6 @@ if __name__ == '__main__':
         simulate_psdf_cython_3()
 
 
+    if args.lag_cython:
+        simulate_lag_cython()
 

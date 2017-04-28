@@ -567,7 +567,7 @@ cdef class psd(PLagBin):
 
         """
         cdef:
-            int iu, k, k0, nfq = self.nfq
+            int iu, k0, nfq = self.nfq
             double res, norm = self.norm, p
         k0 = 1 if self.do_sig else 0
 
@@ -592,6 +592,130 @@ cdef class psd(PLagBin):
             #for i in range(n): dCov[i*n+i] = exp(params[0])*sig2[i]
         else:
             PLagBin.dCovariance(self, params, ik)
+
+
+
+cdef class lag(PLagBin):
+    """Class for calculating CSD/LAG at pre-defined frequency bins"""
+    
+    # global parameters #
+    cdef:
+        double norm
+        int n1
+        psd pm1, pm2
+        double[::1,:] C1, C2
+
+
+    def __init__(self, 
+            list T, list Y, list Ye, 
+            double dt, double[:] fqL, int inorm, int do_sig,
+            double[:] p1, double[:] p2):
+        """Calculate cross spectrum and phase lag at predefined 
+            frequency bins. The model parameters are the cross 
+            spectrum and phase values in the frequency bins 
+            (i.e. 2*(len(fqL)-1) of them)
+
+        Args:
+            T: a list of two arrays of time axes for the two 
+                light curves
+            Y: a list of two arrays of rate values corresponding to T
+            Ye: 1-sigma measurement error corresponding to Y
+            dt: time sampling of the data
+            fqL: frequency bin boundaries
+            inorm: normalization type. 0:var, 1:leahy, 2:rms
+            do_sig: if == 1, include a parameter that multiplies
+                the measurement errors
+            p1: best fit psd parameters for light curve 1
+            p2: best fit psd parameters for light curve 2
+
+        """
+        cdef:
+            int npar = 2*(fqL.shape[0] - 1)
+            np.ndarray t, y, ye
+
+        self.pm1 = psd(T[0], Y[0], Ye[0], dt, fqL, inorm, do_sig)
+        self.pm2 = psd(T[1], Y[1], Ye[1], dt, fqL, inorm, do_sig)
+        self.n1 = self.pm1.n
+        self.norm = (self.pm1.mu * self.pm2.mu)**(inorm*0.5)
+
+
+        t  = np.concatenate((T[0], T[1]))
+        y  = np.concatenate((Y[0]-self.pm1.mu, Y[1]-self.pm2.mu))
+        ye = np.concatenate((Ye[0], Ye[1]))
+        PLagBin.__init__(self, t, y, ye, dt, npar, fqL)
+
+
+
+        # the fixed part of the covariance matrix #
+        self.pm1.Covariance(p1)
+        self.pm2.Covariance(p2)
+        self.pm1.add_measurement_noise(p1, &self.pm1.Cov[0,0], 1)
+        self.pm2.add_measurement_noise(p2, &self.pm2.Cov[0,0], 1)
+        self.C1 = np.array(self.pm1.Cov)
+        self.C2 = np.array(self.pm2.Cov)
+
+
+    
+    cdef covariance_kernel(self, double[:] params):
+        """see @PLagBase.covariance_kernel"""
+        cdef:
+            int iu, k, nfq = self.nfq
+            double res, norm = self.norm
+
+        for iu in range(self.nU):
+            res = 0
+            for k in range(nfq):
+                res += exp(params[k]) * (self.cfq[k, iu]*cos(params[k+nfq]) - 
+                                         self.sfq[k, iu]*sin(params[k+nfq]))
+            self.cU[iu] = res * norm
+
+
+    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
+        """see @PLagBase.add_measurement_noise
+        """
+        pass
+
+
+    cdef covariance_kernel_deriv(self, double[:] params, int ik):
+        """see @PLagBase.covariance_kernel_deriv"""
+        cdef:
+            int iu, k, nfq = self.nfq
+            double res, norm = self.norm, cx, phi
+
+        if ik<nfq:
+            cx  = exp(params[ik]) * norm
+            phi = params[ik+nfq]
+            for iu in range(self.nU):
+                self.cU[iu] = cx * (
+                    self.cfq[ik, iu]*cos(phi) - self.sfq[ik, iu]*sin(phi))
+        else:
+            k   = ik - nfq
+            cx  = exp(params[k]) * norm
+            phi = params[ik]
+            for iu in range(self.nU):
+                self.cU[iu] = cx * (
+                    -self.cfq[k, iu]*sin(phi) - self.sfq[k, iu]*cos(phi))
+
+
+    cdef Covariance(self, double[:] params):
+        """see @PLagBase.Covariance"""
+        cdef int n1 = self.n1
+        PLagBin.Covariance(self, params)
+        self.Cov[:n1, :n1] = self.C1[:,:]
+        self.Cov[n1:, n1:] = self.C2[:,:]
+
+
+    cdef dCovariance(self, double[:] params, int ik):
+        """see @PLagBase.dCovariance"""
+        cdef int n1 = self.n1, n = self.n, i, j
+        PLagBin.dCovariance(self, params, ik)
+        for i in range(n1):
+            for j in range(n1): self.dCov[i, j] = 0
+            for j in range(n1, n): self.dCov[i, j] = self.dCov[j, i]
+        for i in range(n1,n):
+            for j in range(n1,n): self.dCov[i, j] = 0
+
+
 
 
 

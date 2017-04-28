@@ -312,6 +312,17 @@ class psdf(PLagCython):
         p = np.clip(p, -20, 20)
         return p
 
+    def calculate_model(self, pars):
+        """Calculate the psd model given the input
+            parameters at the frequencies resolution
+            defined in the model
+
+        Args:
+            pars: model parameters
+
+        """
+        return self.mod.calculate_model(np.array(pars, np.double))
+
 
 def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
     """Simple optimization routine that uses the
