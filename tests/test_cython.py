@@ -72,7 +72,7 @@ class plagCythonTest(unittest.TestCase):
         n, mu = 4, 20.
         t = np.arange(n, dtype=np.double)
         x = np.random.randn(n) + mu
-        m = plag._plag.PLagBin(t, x, x*0+0.1, 1.0, 1, np.array([0.25, 0.5]))
+        m = plag._plag.PLagBin(t, x, x*0+0.1, 1.0, 1, np.array([0.25, 0.5]), 0)
         assert(m.nfq==1)
         assert(m.n==n)
 
@@ -84,7 +84,7 @@ class plagCythonTest(unittest.TestCase):
         t = np.concatenate((t,t))
         fqL = np.array([0.25, 0.3,0.5])
         dt = 1.0
-        p = plag._plag.PLagBin(t, t, t, dt, 1, fqL)
+        p = plag._plag.PLagBin(t, t, t, dt, 1, fqL, 0)
 
         import scipy.integrate as INT
         def Cfun(f, tt):
@@ -112,7 +112,7 @@ class plagCythonTest(unittest.TestCase):
         t = np.concatenate((t,t))
         fqL = np.array([0.25, 0.3,0.5])
         dt = 1.0
-        p = plag._plag.PLagBin(t, t, t, dt, 1, fqL)
+        p = plag._plag.PLagBin(t, t, t, dt, 1, fqL, 0)
 
         import scipy.integrate as INT
         def Sfun(f, tt):
@@ -184,7 +184,8 @@ class plagCythonTest(unittest.TestCase):
         l0 = p0.logLikelihood(inp, 1, 0)
         l1 = p1.logLikelihood(np.log(np.exp(inp)/mu), 1, 0)
         l2 = p2.logLikelihood(np.log(np.exp(inp)/mu**2), 1, 0)
-        np.testing.assert_almost_equal(l0, l1, l2)
+        np.testing.assert_almost_equal(l0, l1)
+        np.testing.assert_almost_equal(l0, l2)
 
 
     def test_psd_gradient_1(self):
@@ -257,5 +258,370 @@ class plagCythonTest(unittest.TestCase):
         g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
                     for i in range(2)]
         np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_1(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 0, 1, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(2)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_2(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf with do_sig=1
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.1])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 1, 1, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(3)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_3(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf (bpl)
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.1])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 0, 2, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(3)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_4(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf (bpl) with do_sig=1
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.1, 0.2])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 1, 2, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(4)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_5(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf (lor) with do_sig=1
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.1, 0.2])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 1, 3, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(4)]
+        np.testing.assert_almost_equal(g1,g2,4)
+
+
+    def test_psdf_gradient_6(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf (lor0) with do_sig=1
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.2])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 1, 4, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(3)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_7(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf (plor)
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.2, 0.15, 0.12])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 0, 13, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(5)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_8(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf (2bpl)
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.2, 0.15, 0.12, 0.11])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 0, 22, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(6)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+    def test_psdf_gradient_9(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for psdf (2lor)
+        """
+        np.random.seed(394)
+        n, dt = 4, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n)*2 + 4
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.1, 0.1, 0.2, 0.15, 0.12, 0.11])
+        p = plag._plag.psdf(t, x, xe, dt, fqL, 0, 0, 33, 50)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i):
+            pp = np.array(inpars)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-5, 1, (i,)) 
+                    for i in range(6)]
+        np.testing.assert_almost_equal(g1,g2)
+
+
+
+    def test_lag_init(self):
+        """Test the initialization of lag
+        """
+        t = np.arange(4, dtype=np.double)
+        fqL = np.array([0.25,0.5])
+        p0 = np.array([1.])
+        p = plag._plag.lag([t,t], [t,t], [t,t], 1.0, fqL, 1, 0, p0, p0)
+        assert(p.n == 8)
+        assert(p.mu == 0)
+        assert(p.nfq == 1)
+        assert(p.npar == 2)
+
+        # do_sig=1 #
+        p0 = np.array([0.5, 1.])
+        p = plag._plag.lag([t,t], [t,t], [t,t], 1.0, fqL, 1, 1, p0, p0)
+        assert(p.npar == 3)
+
+
+    def test_lag_logLikelihood(self):
+        """Test that logLikelihood of lag runs
+        """
+        n = 12
+        t = np.arange(n, dtype=np.double)
+        fqL = np.array([1./12,0.5])
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.1
+        p0 = np.array([1.])
+        c = plag._plag.lag([t,t], [x,y], [x*0+0.1]*2, 1.0, fqL, 1, 0, p0, p0)
+        inp = np.array([1., 0.1])
+        l1 = c.logLikelihood(inp, 1, 0)
+        assert(np.isfinite(l1))
+        
+
+        # do_sig=1
+        p0 = np.array([0, 1.])
+        c = plag._plag.lag([t,t], [x,y], [x*0+0.1]*2, 1.0, fqL, 1, 1, p0, p0)
+        inp = np.array([0, 1., 0.1])
+        assert(l1 == c.logLikelihood(inp, 1, 0))
+
+
+    def test_lag_norm(self):
+        """Test that norm in lag works
+        """
+        n = 12
+        t = np.arange(n, dtype=np.double)
+        fqL = np.array([1./12,0.5])
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.1
+
+        x0 = np.array([1.])
+        p0 = plag._plag.lag([t,t], [x,y], [x*0+0.1]*2, 1.0, fqL, 0, 0, x0, x0)
+        x0_1 = np.array([np.log(np.exp(1.)/x.mean())])
+        x0_2 = np.array([np.log(np.exp(1.)/y.mean())])
+        p1 = plag._plag.lag([t,t], [x,y], [x*0+0.1]*2, 1.0, fqL, 1, 0, x0_1, x0_2)
+        x0_1 = np.array([np.log(np.exp(1.)/x.mean()**2)])
+        x0_2 = np.array([np.log(np.exp(1.)/y.mean()**2)])
+        p2 = plag._plag.lag([t,t], [x,y], [x*0+0.1]*2, 1.0, fqL, 2, 0, x0_1, x0_2)
+
+        inp = np.array([1., 0.1])
+        mu = (x.mean()*y.mean())**0.5
+        l0 = p0.logLikelihood(inp, 1, 0)
+
+        inp = np.array([np.log(np.exp(1.)/mu), 0.1])
+        l1 = p1.logLikelihood(inp, 1, 0)
+        inp = np.array([np.log(np.exp(1.)/mu**2), 0.1])
+        l2 = p2.logLikelihood(inp, 1, 0)
+        np.testing.assert_almost_equal(l0, l1)
+        np.testing.assert_almost_equal(l0, l2)
+
+
+    def test_lag_gradient_1(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for lag with do_sig=0
+        """
+        np.random.seed(4897)
+        n, dt = 8, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.5
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0, .2])
+        x0 = np.array([2.])
+        p = plag._plag.lag([t,t], [x,x], [xe,xe], dt, fqL, 0, 0, x0, x0)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i, inp):
+            pp = np.array(inp)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
+                    for i in range(2)]
+        np.testing.assert_almost_equal(g1,g2, 6)
+
+
+    def test_lag_gradient_2(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for lag with do_sig=1
+        """
+        np.random.seed(394)
+        n, dt = 24, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.5
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.5, .2, .1])
+        x0 = np.array([0.5, 1.])
+        p = plag._plag.lag([t,t], [x,x], [xe,xe], dt, fqL, 0, 1, x0, x0)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i, inp):
+            pp = np.array(inp)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
+                    for i in range(3)]
+        np.testing.assert_almost_equal(g1,g2, 4)
+
+
+    def test_lag_gradient_3(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for lag with do_sig=1, inorm=2
+        """
+        np.random.seed(394)
+        n, dt = 12, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.5
+        xe = x*0+0.01
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.5, .2, .1])
+        x0 = np.array([0.5, 1.])
+        p = plag._plag.lag([t,t], [x,x], [xe,xe], dt, fqL, 1, 1, x0, x0)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i, inp):
+            pp = np.array(inp)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
+                    for i in range(3)]
+        np.testing.assert_almost_equal(g1,g2, 4)
 
 

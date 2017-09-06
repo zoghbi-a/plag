@@ -153,16 +153,18 @@ class PLagCython(object):
         self.mod.Covariance(np.array(params, np.double))
 
 
-    def _get_cov_matrix(self, pars=None):
+    def _get_cov_matrix(self, pars=None, add_noise=False):
         """Returns the covariance matrix stored in self.mod.Cov
 
         Args:
             pars: input parameters. If not given, return
                 the covariance matrix in memory
+            add_noise: add measurement noise to the diagonal?
+                Used only if pars is not None
         """
         if pars is not None:
             pars = np.array(pars, np.double)
-        return self.mod._get_cov_matrix(pars)
+        return np.array(self.mod._get_cov_matrix(pars, add_noise))
 
 
     def logLikelihood(self, params, icov=1, inv=0):
@@ -268,6 +270,7 @@ class psd(PLagCython):
         p = np.clip(p, -20, 20)
         return p
 
+
 class psdf(PLagCython):
     """ PSD Using some pre-defined functions
     """
@@ -289,6 +292,7 @@ class psdf(PLagCython):
                 1: powerlaw
                 2: bending powerlaw
                 3: lorentzian with 3 parameters
+                4: 0-centered lorentzian with 2 params
                 13: PL + lorentzian
                 22: bending PL + bending PL
                 33: lorentzian + lorentzian
@@ -309,7 +313,7 @@ class psdf(PLagCython):
         __doc__ = super(self.__class__, self).step_param.__doc__
         dpar = np.clip(dpar, -2, 2)
         p = par + dpar
-        p = np.clip(p, -20, 20)
+        p = np.clip(p, -50, 20)
         return p
 
     def calculate_model(self, pars):
@@ -322,6 +326,45 @@ class psdf(PLagCython):
 
         """
         return self.mod.calculate_model(np.array(pars, np.double))
+
+
+class lag(PLagCython):
+    """ PSD at predefined frequencies
+    """
+
+    def __init__(self, t, y, ye, dt, fqL, p1, p2, norm='rms', fit_sigma=False):
+        """A psd model to calculated psd at pre-defined
+        frequencies. The normalization is defined by norm.
+        Optionally, a sigma factor can be included as a fit parameter
+
+        Args:
+            t: np.ndarray of time axis
+            y: np.ndarray of corresponding rates
+            ye: np.ndarray of the 1-sigma measurement errors.
+            dt: time sampling
+            fqL: a list of array of frequency bin boundaries.
+            norm: var|leahy|rms
+            fit_sigma: include a sigma factor an additional free parameter
+            .
+            .
+            .
+
+        """
+        inorm = 2
+        if norm == 'var': inorm = 0
+        if norm == 'leahy': inorm = 1
+        do_sig = 1 if fit_sigma else 0
+        super(self.__class__, self).__init__(
+            'lag', t, y, ye, dt, np.array(fqL, np.double), inorm, do_sig,
+            np.array(p1, np.double), np.array(p2, np.double))
+
+
+    def step_param(self, par, dpar):
+        __doc__ = super(self.__class__, self).step_param.__doc__
+        dpar = np.clip(dpar, -2, 2)
+        p = par + dpar
+        p = np.clip(p, -20, 20)
+        return p
 
 
 def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
@@ -391,7 +434,10 @@ def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
             if not isinstance(ip_fix, list): ip_fix = [ip_fix]
             ivar = [i for i in ivar if i not in ip_fix]
         jvar   = [[i] for i in ivar]
-        hinv_  = np.linalg.inv(h[ivar, jvar])
+        try:
+            hinv_  = np.linalg.inv(h[ivar, jvar])
+        except:
+            hinv_  = np.linalg.inv(h[ivar, jvar]+np.eye(len(ivar)))
         dpar_  = np.dot(hinv_, g[ivar])
         dpar   = np.zeros(npar)
         dpar[ivar] = dpar_
@@ -430,4 +476,50 @@ def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
         print('*'*20)
     return p, pe, l
 
+
+def predict(plag_type, t, y, ye, dt, tnew, pars, *args):
+    """Predict the values at tnew give the best fit solution
+        page 16 in Rasmussen & C. K. I. Williams:
+            Gaussian Processes for Machine Learning. See
+            also Zu, Kochanek, Peterson 2011
+    
+    Args:
+        plag_type: a string indicating the model type: e.g. psd, psdf
+        t: np.ndarray of the time axis
+        y: np.ndarray for the rate axis
+        ye: np.ndarray for the measurement errors
+        dt: time sampling
+        tnew: np.ndarray of times where the predictions are to be made
+        pars: best fit parameters from @optimize
+        args: Any extra arguments used to initialize the model.
+            See individual models for details. e.g. fqL etc
+
+    Returns:
+        (ynew, yenew): Light curve estimates ynew and their errors 
+            yenew at the times tnew.
+    """
+    
+    mod_d = eval('{}(t, y, ye, dt, *args)'.format(plag_type))
+    n_d = len(t)
+    ym = y.mean()
+
+    t_s = np.concatenate((t, tnew))
+    y_s = np.concatenate((y*0, tnew*0)) + ym
+    mod_s = eval('{}(t_s, y_s, y_s, dt, *args)'.format(plag_type))
+    
+    # C^-1 y #
+    lnlike = mod_d.logLikelihood(pars, 1, 1)
+    Ci = mod_d._get_cov_matrix()
+    Ciy = np.dot(Ci, y)
+
+    S = mod_s._get_cov_matrix(pars)
+    S_sd = S[:n_d, n_d:].T
+    S_ss = S[n_d:, n_d:]
+
+
+    ynew = np.dot(S_sd, Ciy)
+    ycov = S_ss - np.dot(np.dot(S_sd, Ci), S_sd.T)
+    enew = np.sqrt(np.diag(ycov)) 
+
+    return ynew, enew
 

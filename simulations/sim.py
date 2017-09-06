@@ -7,10 +7,11 @@ import numpy as np
 import az
 import scipy.optimize as opt
 
+import matplotlib as mpl
+mpl.use('Agg')
 import matplotlib.pylab as plt
 
 from IPython import embed
-
 
 import sys
 import os
@@ -24,7 +25,7 @@ sim_input = {
     'dt'    : 1.0,
     'mean'  : 100.,
     'norm'  : 'var',
-    'psdpar': ['powerlaw', [1., -2]],
+    'psdpar': ['powerlaw', [0.08, -2]],
     'seglen': 128,
     'infqL' : 6,
     'gnoise': 0.1,
@@ -67,6 +68,7 @@ def _simulate_lc(seed=34789, return_sim=False, dolag=False):
     t = sim.t[4*n:8*n].reshape((n, 4)).mean(1)
     if dolag:
         s = sim.y[4*n:8*n].reshape((n, 4)).mean(1)
+        #plt.plot(sim.t, sim.x, sim.t, sim.y); plt.show();exit(0)
     if gnoise is None:
         # poisson noise #
         raise NotImplemented
@@ -129,6 +131,16 @@ def _get_fqL(tseg):
     return fqL, fq
 
 
+def neg_lnlike(p, m):
+    l = m.logLikelihood(p, 1, 0)
+    return -l
+def neg_dlnlike(p, m):
+    l,g,h = m.dLogLikelihood(p)
+    if not np.isfinite(l):
+        l = -1e4
+        g = np.ones_like(p)
+    return -l, -g
+
 def simulate_psd_cython():
     """Run a simple plag psd simulation. do_sig=0"""
 
@@ -137,8 +149,6 @@ def simulate_psd_cython():
         exec('{0} = sim_input["{0}"]'.format(k))
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
-    def neg_lnlike(p, m):
-        return -m.logLikelihood(p, 1, 0)
 
     sims = []
     for isim in range(1, args.nsim+1):
@@ -154,12 +164,14 @@ def simulate_psd_cython():
 
         model = plag._plag.psd(T[0], R[0], E[0], dt, fqL, inorm, 0)
         p0 = np.ones(len(fqL)-1)
-        res = opt.minimize(neg_lnlike, p0, args=(model,), method='L-BFGS-B',
-                bounds=[(-20,20)]*len(fq))
+        # res = opt.minimize(neg_lnlike, p0, args=(model,), method='L-BFGS-B',
+        #         bounds=[(-15,15)]*len(fq))
+        res = opt.minimize(neg_dlnlike, p0, args=(model,), jac=True, 
+            method='L-BFGS-B', bounds=[(-15,15)]*len(fq))
         sims.append(res.x)
 
     sims = np.array(sims)
-    sm, ss = sims.mean(0), sims.std(0)
+    sm, ss = np.median(sims, 0), np.std(sims, 0)
     sim = _simulate_lc(None, return_sim=1)
     fm, pm = sim.psd_model[:,1:]
     ii = np.logical_and(fm>fq[0], fm<fq[-1])
@@ -178,8 +190,6 @@ def simulate_psd_cython_2():
         exec('{0} = sim_input["{0}"]'.format(k))
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
-    def neg_lnlike(p, m):
-        return -m.logLikelihood(p, 1, 0)
 
     sims = []
     for isim in range(1, args.nsim+1):
@@ -195,12 +205,14 @@ def simulate_psd_cython_2():
 
         model = plag._plag.psd(T[0], R[0], E[0], dt, fqL, inorm, 1)
         p0 = np.ones(len(fqL))
-        res = opt.minimize(neg_lnlike, p0, args=(model,), method='L-BFGS-B',
-                bounds=[(-2,2)]+[(-20,20)]*len(fq))
+        #res = opt.minimize(neg_lnlike, p0, args=(model,), method='L-BFGS-B',
+        #        bounds=[(-2,2)]+[(-20,20)]*len(fq))
+        res = opt.minimize(neg_dlnlike, p0, args=(model,), jac=True, 
+            method='L-BFGS-B', bounds=[(-2,2)]+[(-15,15)]*len(fq))
         sims.append(res.x)
 
     sims = np.array(sims)
-    sm, ss = sims.mean(0), sims.std(0)
+    sm, ss = np.median(sims, 0), np.std(sims, 0)
     sim = _simulate_lc(None, return_sim=1)
     fm, pm = sim.psd_model[:,1:]
     ii = np.logical_and(fm>fq[0], fm<fq[-1])
@@ -221,8 +233,6 @@ def simulate_psdf_cython():
         exec('{0} = sim_input["{0}"]'.format(k))
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
-    def neg_lnlike(p, m):
-        return -m.logLikelihood(p, 1, 0)
 
     sims = []
     for isim in range(1, args.nsim+1):
@@ -235,17 +245,18 @@ def simulate_psdf_cython():
         # get frequncy bins #
         fqL, fq = _get_fqL(T)
         fqL = fqL[[0,-1]]
-        
 
         
         model = plag._plag.psdf(T[0], R[0], E[0], dt, fqL, inorm, 0, 1, 50)
         p0 = np.array([1., 1.])
-        res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        #res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        res = opt.minimize(neg_dlnlike, p0, args=(model,), jac=True, 
+            method='L-BFGS-B', bounds=[(-5,5)]+[(-3,2)])
         sims.append(res.x)
     sims = np.array(sims)
     smod = np.array([model.calculate_model(s) for s in sims])
     fs = smod[0,0]
-    ms, ss = smod[:,1].mean(0), smod[:,1].std(0)
+    ms, ss = np.median(smod[:,1], 0), np.std(smod[:,1], 0)
     sim = _simulate_lc(None, return_sim=1)
     fm, pm = sim.psd_model[:,1:]
     ii = np.logical_and(fm>fqL[0], fm<fqL[-1])
@@ -264,8 +275,6 @@ def simulate_psdf_cython_2():
         exec('{0} = sim_input["{0}"]'.format(k))
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
-    def neg_lnlike(p, m):
-        return -m.logLikelihood(p, 1, 0)
 
     sims = []
     for isim in range(1, args.nsim+1):
@@ -283,7 +292,9 @@ def simulate_psdf_cython_2():
         
         model = plag._plag.psdf(T[0], R[0], E[0], dt, fqL, inorm, 1, 1, 50)
         p0 = np.array([0., .1, -2.])
-        res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        #res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        res = opt.minimize(neg_dlnlike, p0, args=(model,), jac=True, 
+            method='L-BFGS-B', bounds=[(-2,2), (-5,5)]+[(-3,2)])
         sims.append(res.x)
     sims = np.array(sims)
     smod = np.array([model.calculate_model(s) for s in sims])
@@ -308,15 +319,18 @@ def simulate_psdf_cython_3():
     for k in ['n', 'dt', 'mean', 'norm', 'gnoise', 'seglen']:
         exec('{0} = sim_input["{0}"]'.format(k))
 
-    psdpar = [['powerlaw', [1., -2]], ['lorentz', [50, 8e-2, 3e-2]]]
+    psdpar = [['powerlaw', [0.08, -2]], ['lorentz', [50, 8e-2, 1e-2]]]
     sim = az.SimLc(seed=None)
     sim.add_model(*psdpar[0])
     sim.add_model(psdpar[1][0], psdpar[1][1], clear=False)
+    
+    # plt.ion();embed();exit(0)
+    # sim.simulate(16*n, dt/4, mean, norm)
+    # fm, pm = sim.psd_model[:,1:]
+
 
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
-    def neg_lnlike(p, m):
-        return -m.logLikelihood(p, 1, 0)
 
     sims = []
     for isim in range(1, args.nsim+1):
@@ -341,7 +355,9 @@ def simulate_psdf_cython_3():
 
         model = plag._plag.psdf(T[0], R[0], E[0], dt, fqL, inorm, 0, 13, 50)
         p0 = np.array([0.1, -2, 3, -2.5, -3.5])
-        res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        #res = opt.minimize(neg_lnlike, p0, args=(model,), method='Powell')
+        res = opt.minimize(neg_dlnlike, p0, args=(model,), jac=True, 
+            method='L-BFGS-B', bounds=[(-5,5)]*5)
         sims.append(res.x)
     sims = np.array(sims)
     smod = np.array([model.calculate_model(s) for s in sims])
@@ -362,12 +378,12 @@ def simulate_lag_cython():
     """Run a simple plag psd/lag simulation. do_sig=0"""
 
     # input #
+    sim_input['psdpar'] = ['broken_powerlaw', [.2, -1, -2, 1e-3]]
     for k in ['norm', 'dt', 'psdpar', 'lag', 'phase']:
         exec('{0} = sim_input["{0}"]'.format(k))
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
-    def neg_lnlike(p, m):
-        return -m.logLikelihood(p, 1, 0)
+    sim_input['infqL'] = 4
 
     sims = []
     for isim in range(1, args.nsim+1):
@@ -384,19 +400,23 @@ def simulate_lag_cython():
         p0 = np.ones(len(fqL)-1)
         pm1 = plag._plag.psd(T[0][0], R[0][0], E[0][0], dt, fqL, inorm, 0)
         pm2 = plag._plag.psd(T[0][1], R[0][1], E[0][1], dt, fqL, inorm, 0)
-        res1 = opt.minimize(neg_lnlike, p0, args=(pm1,), method='L-BFGS-B',
-                bounds=[(-20,20)]*len(fq))
-        res2 = opt.minimize(neg_lnlike, res1.x, args=(pm2,), method='L-BFGS-B',
-                bounds=[(-20,20)]*len(fq))
+        res1 = opt.minimize(neg_dlnlike, p0, args=(pm1,), jac=True, 
+            method='L-BFGS-B', bounds=[(-15,15)]*len(fq))
+        res2 = opt.minimize(neg_dlnlike, p0, args=(pm2,), jac=True, 
+            method='L-BFGS-B', bounds=[(-15,15)]*len(fq))
 
-        c0 = np.concatenate(((res1.x+res2.x)*0.3, fq*0+0.1))
+        c0 = np.concatenate(((res1.x+res2.x)*0.3, np.random.randn(len(fq))*0.01))
         cm  = plag._plag.lag(T[0], R[0], E[0], dt, fqL, inorm, 0, res1.x, res2.x)
+        
         res = opt.minimize(neg_lnlike, c0, args=(cm,), method='Powell')
+        res = opt.minimize(neg_dlnlike, res.x, args=(cm,), jac=True, 
+            method='L-BFGS-B', bounds=[(-15,15)]*len(fq)+[(-np.pi,np.pi)]*len(fq))
+        
         
         sims.append(np.concatenate((res1.x, res2.x, res.x)))
 
     sims = np.array(sims)
-    sm, ss = sims.mean(0), sims.std(0)
+    sm, ss = np.median(sims, 0), np.std(sims, 0)
     sim = _simulate_lc(None, return_sim=1, dolag=1)
     fm, pm = sim.psd_model[:,1:]
     fm, lm = np.array(sim.lag_model)[:,1:]

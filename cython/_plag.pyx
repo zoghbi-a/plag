@@ -200,8 +200,6 @@ cdef class PLagBase:
                 derivative. If requested, it will be stored in 
                 self.Cov.
                 If == 0, just do the likelihood calculation.
-                If < 0, store the residuals in the diagonal elements
-                    of self.Cov
 
         Returns:
             log likelihood value
@@ -216,8 +214,8 @@ cdef class PLagBase:
 
         ## define some variables ##
         cdef:
-            int i, n = self.n, info, nrhs = 1
-            double[::1] tmp_x, tmp_y = np.array(self.yarr)
+            int i, j, n = self.n, info, nrhs = 1
+            double[::1] tmp_y = np.array(self.yarr)
             double chi2, logDet = 0
             double* yarr = &self.yarr[0]
 
@@ -233,20 +231,18 @@ cdef class PLagBase:
         #-- Determinant --#
         for i in range(n): logDet += log(Cov[i+n*i])
         logDet *= 2
-        if inv < 0:
-            tmp_x = np.zeros(n, np.double)
-            for i in range(n): tmp_x[i] = Cov[i+n*i]**2
 
         # --chi2 = x^T C x --#
         lapack.dpotrs('L', &n, &nrhs, Cov, &n, &tmp_y[0], &n, &info)
         chi2 = blas.ddot(&n, yarr, &nrhs, &tmp_y[0], &nrhs)
-        if inv < 0:
-            for i in range(n):
-                Cov[i+n*i] = tmp_y[i] * yarr[i] * tmp_x[i]
+
 
         #-- invert C? --#
         if inv > 0:
             lapack.dpotri('L', &n, Cov, &n, &info)
+            for i in range(n):
+                for j in range(i):
+                    Cov[j+n*i] = Cov[i+n*j]
 
         #-- loglikelihood --#
         logLike = -0.5 * ( chi2 + logDet + n*log(2*M_PI) )
@@ -263,7 +259,7 @@ cdef class PLagBase:
             
 
         Returns:
-            logLikelihood, gradient_arrat, hessian_matrix
+            logLikelihood, gradient_array, hessian_matrix
 
 
         """
@@ -325,13 +321,14 @@ cdef class PLagBase:
 
 
 
-    def _get_cov_matrix(self, pars=None):
+    def _get_cov_matrix(self, pars=None, add_noise=False):
         """Calculate and return the covariance matrix
             for the parameter array pars
 
         Args:
             pars: array of parameters. If None, just return
                 self.Cov
+            add_noise: add measurement noise to the diagonal?
 
         Returns:
             the Covariance Matrix (without the diagonal sigma)
@@ -339,6 +336,9 @@ cdef class PLagBase:
 
         if pars is not None:
             self.Covariance(np.array(pars, np.double))
+            if add_noise:
+                self.add_measurement_noise(np.array(pars, np.double), 
+                    &self.Cov[0,0], 1)
         return np.asarray(self.Cov)
 
 
@@ -365,25 +365,31 @@ cdef class PLagBin(PLagBase):
         public int nfq
         double[:] fqL
         double[:,:] cfq, sfq
+        int do_sig
     
 
     def __init__( self, 
             np.ndarray[dtype=np.double_t, ndim=1] t,
             np.ndarray[dtype=np.double_t, ndim=1] y, 
             np.ndarray[dtype=np.double_t, ndim=1] ye, 
-            double dt, int npar, double[:] fqL):
+            double dt, int npar, double[:] fqL, int do_sig):
         """Base class for models using predefined frequency bins
             It is not meant to be initialized directly.
             It initializes PLagBase and pre-calculate the integrals.
 
         Args:
             ...: Similar to PLagBase
-            fqL: a list or array of the frequency bin boundaries"""
+            fqL: a list or array of the frequency bin boundaries
+            do_sig: if == 1, include a parameter that multiplies
+                the measurement errors
+
+        """
         
         self.nfq = fqL.shape[0] - 1
         self.fqL = np.array(fqL)
         PLagBase.__init__(self, t, y, ye, dt, npar)
         self.calculate_integrals()
+        self.do_sig = do_sig
 
 
 
@@ -475,6 +481,16 @@ cdef class PLagBin(PLagBase):
         return np.asarray(self.sfq[idx, :] 
                 if stype=='s' else self.cfq[idx, :])
 
+    
+    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
+        """see @PLagBase.add_measurement_noise
+        """
+        cdef:
+            int i, n = self.n
+            double* sig2 = &self.sig2[0]
+            double fac = 1.0
+        if self.do_sig: fac = exp(params[0])
+        for i in range(n): arr[i*n+i] += sign*fac*sig2[i]
 
 
 cdef class psd(PLagBin):
@@ -483,7 +499,6 @@ cdef class psd(PLagBin):
     # global parameters #
     cdef:
         double norm
-        int do_sig
 
 
     def __init__(self, 
@@ -511,9 +526,8 @@ cdef class psd(PLagBin):
         """
         cdef int npar = fqL.shape[0] - 1
         if do_sig == 1: npar += 1
-        PLagBin.__init__(self, t, y, ye, dt, npar, fqL)
+        PLagBin.__init__(self, t, y, ye, dt, npar, fqL, do_sig)
         self.norm = self.mu**inorm
-        self.do_sig = do_sig
 
     
     cdef covariance_kernel(self, double[:] params):
@@ -539,17 +553,6 @@ cdef class psd(PLagBin):
             for k in range(nfq):
                 res += exp(params[k+k0]) * self.cfq[k, iu] * norm
             self.cU[iu] = res
-
-
-    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
-        """see @PLagBase.add_measurement_noise
-        """
-        cdef:
-            int i, n = self.n
-            double* sig2 = &self.sig2[0]
-            double fac = 1.0
-        if self.do_sig: fac = exp(params[0])
-        for i in range(n): arr[i*n+i] += sign*fac*sig2[i]
 
 
     cdef covariance_kernel_deriv(self, double[:] params, int ik):
@@ -583,13 +586,10 @@ cdef class psd(PLagBin):
         """see @PLagBase.dCovariance"""
         cdef:
             int i, n = self.n
-            double* dCov = &self.dCov[0,0]
-            double* sig2 = &self.sig2[0]
 
         if self.do_sig and ik==0:
             self.dCov[:, :] = 0
-            self.add_measurement_noise(params, dCov, 1)
-            #for i in range(n): dCov[i*n+i] = exp(params[0])*sig2[i]
+            self.add_measurement_noise(params, &self.dCov[0,0], 1)
         else:
             PLagBin.dCovariance(self, params, ik)
 
@@ -632,6 +632,7 @@ cdef class lag(PLagBin):
         cdef:
             int npar = 2*(fqL.shape[0] - 1)
             np.ndarray t, y, ye
+        if do_sig == 1: npar += 1
 
         self.pm1 = psd(T[0], Y[0], Ye[0], dt, fqL, inorm, do_sig)
         self.pm2 = psd(T[1], Y[1], Ye[1], dt, fqL, inorm, do_sig)
@@ -642,7 +643,7 @@ cdef class lag(PLagBin):
         t  = np.concatenate((T[0], T[1]))
         y  = np.concatenate((Y[0]-self.pm1.mu, Y[1]-self.pm2.mu))
         ye = np.concatenate((Ye[0], Ye[1]))
-        PLagBin.__init__(self, t, y, ye, dt, npar, fqL)
+        PLagBin.__init__(self, t, y, ye, dt, npar, fqL, do_sig)
 
 
 
@@ -659,42 +660,45 @@ cdef class lag(PLagBin):
     cdef covariance_kernel(self, double[:] params):
         """see @PLagBase.covariance_kernel"""
         cdef:
-            int iu, k, nfq = self.nfq
+            int iu, k, k0, nfq = self.nfq
             double res, norm = self.norm
+
+        k0 = 1 if self.do_sig else 0
 
         for iu in range(self.nU):
             res = 0
             for k in range(nfq):
-                res += exp(params[k]) * (self.cfq[k, iu]*cos(params[k+nfq]) - 
-                                         self.sfq[k, iu]*sin(params[k+nfq]))
+                res += exp(params[k+k0]) * (self.cfq[k, iu]*cos(params[k+k0+nfq]) - 
+                                            self.sfq[k, iu]*sin(params[k+k0+nfq]))
             self.cU[iu] = res * norm
-
-
-    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
-        """see @PLagBase.add_measurement_noise
-        """
-        pass
 
 
     cdef covariance_kernel_deriv(self, double[:] params, int ik):
         """see @PLagBase.covariance_kernel_deriv"""
         cdef:
-            int iu, k, nfq = self.nfq
+            int iu, k, k0, nfq = self.nfq
             double res, norm = self.norm, cx, phi
 
-        if ik<nfq:
-            cx  = exp(params[ik]) * norm
-            phi = params[ik+nfq]
-            for iu in range(self.nU):
-                self.cU[iu] = cx * (
-                    self.cfq[ik, iu]*cos(phi) - self.sfq[ik, iu]*sin(phi))
+        k0 = 1 if self.do_sig else 0
+
+        if self.do_sig and ik==0:
+            #self.cU[:] = 0.
+            # we do it in dCovariance
+            pass
         else:
-            k   = ik - nfq
-            cx  = exp(params[k]) * norm
-            phi = params[ik]
-            for iu in range(self.nU):
-                self.cU[iu] = cx * (
-                    -self.cfq[k, iu]*sin(phi) - self.sfq[k, iu]*cos(phi))
+            if (ik-k0)<nfq:
+                cx  = exp(params[ik]) * norm
+                phi = params[ik+nfq]
+                for iu in range(self.nU):
+                    self.cU[iu] = cx * (
+                        self.cfq[ik-k0, iu]*cos(phi) - self.sfq[ik-k0, iu]*sin(phi))
+            else:
+                k   = ik - nfq
+                cx  = exp(params[k]) * norm
+                phi = params[ik]
+                for iu in range(self.nU):
+                    self.cU[iu] = cx * (
+                        -self.cfq[k-k0, iu]*sin(phi) - self.sfq[k-k0, iu]*cos(phi))
 
 
     cdef Covariance(self, double[:] params):
@@ -707,22 +711,27 @@ cdef class lag(PLagBin):
 
     cdef dCovariance(self, double[:] params, int ik):
         """see @PLagBase.dCovariance"""
-        cdef int n1 = self.n1, n = self.n, i, j
-        PLagBin.dCovariance(self, params, ik)
-        for i in range(n1):
-            for j in range(n1): self.dCov[i, j] = 0
-            for j in range(n1, n): self.dCov[i, j] = self.dCov[j, i]
-        for i in range(n1,n):
-            for j in range(n1,n): self.dCov[i, j] = 0
+        cdef:
+            int n1 = self.n1, n = self.n, i, j
+
+        if self.do_sig and ik==0:
+            self.dCov[:, :] = 0
+            self.add_measurement_noise(params, &self.dCov[0,0], 1)
+        else:
+            PLagBin.dCovariance(self, params, ik)
+            for i in range(n1):
+                for j in range(n1): self.dCov[i, j] = 0
+                for j in range(n1, n): self.dCov[i, j] = self.dCov[j, i]
+            for i in range(n1,n):
+                for j in range(n1,n): self.dCov[i, j] = 0
 
 
 
 
 
 cdef double _psdf__pl(double fq, double[:] pars):
-    """Power law model with pars = [norm, index]
-    """
-    return exp(pars[0]) * fq**pars[1]
+    """Power law model with pars = [norm, index]"""
+    return exp(pars[0]) * pow(fq,pars[1])
 
 cdef double _psdf__bpl(double fq, double[:] pars):
     """Bending Power law model with pars = [norm, index, bend]
@@ -731,7 +740,7 @@ cdef double _psdf__bpl(double fq, double[:] pars):
     a = exp(pars[0]) # norm
     b = pars[1] # index
     c = exp(pars[2]) #  break
-    return (a/fq) * (1 + (fq/c)**(-b-1))**(-1)
+    return (a/fq) * 1./(1 + pow(fq/c,-b-1))
 
 cdef double _psdf__lor(double fq, double[:] pars):
     """Lorentzian model with pars = [norm, fq_center, fq_sigma]
@@ -740,7 +749,15 @@ cdef double _psdf__lor(double fq, double[:] pars):
     a = exp(pars[0]) # norm
     b = exp(pars[1]) # fq_center
     c = exp(pars[2]) #  fq_sigma
-    return a * (c/(2*M_PI)) / ( (fq-b)**2 + (c/2)**2 )
+    return a * (c/(2*M_PI)) / ( (fq-b)*(fq-b) + (c/2)*(c/2) )
+
+cdef double _psdf__lor0(double fq, double[:] pars):
+    """0-centered Lorentzian model with pars = [norm, fq_sigma]
+    """
+    cdef double a, c
+    a = exp(pars[0]) # norm
+    c = exp(pars[1]) #  fq_sigma
+    return a * (c/(2*M_PI)) / ( fq*fq + (c/2)*(c/2) )
 
 cdef double _psdf__plor(double fq, double[:] pars):
     """PL + lore: pnorm, pindex, l_norm, l_cent, l_sigm"""
@@ -748,11 +765,81 @@ cdef double _psdf__plor(double fq, double[:] pars):
 
 cdef double _psdf__2bpl(double fq, double[:] pars):
     """BPL + BPL: [norm, index, bend]_1 [norm, index, bend]_2"""
-    return _psdf__bpl(fq, pars[:3]) + _psdf__lor(fq, pars[3:])
+    return _psdf__bpl(fq, pars[:3]) + _psdf__bpl(fq, pars[3:])
 
 cdef double _psdf__2lor(double fq, double[:] pars):
     """Lor+Lor: [norm, fq_c, fq_w]_1 [norm, fq_c, fq_w]_2"""
     return _psdf__lor(fq, pars[:3]) + _psdf__lor(fq, pars[3:])
+
+
+cdef double _Dpsdf__pl(double fq, double[:] pars, int ik):
+    """Derivative of _psdf__pl"""
+    if ik == 0:
+        return _psdf__pl(fq, pars)
+    else:
+        return log(fq) * _psdf__pl(fq, pars)
+
+cdef double _Dpsdf__bpl(double fq, double[:] pars, int ik):
+    """Derivative of _psdf__bpl"""
+    cdef double a, b, c, r
+    a = exp(pars[0]) # norm
+    b = pars[1] # index
+    c = exp(pars[2]) #  break
+    if ik == 0:
+        r = _psdf__bpl(fq, pars)
+    elif ik == 1:
+        r = a*pow(fq/c, -1-b) * log(fq/c) / (fq*pow(1+pow(fq/c,-1-b), 2))
+    else:
+        r = ((-1-b)*a/c * pow(fq/c,-2-b)) / pow(1+pow(fq/c,-1-b),2)
+    return r
+
+cdef double _Dpsdf__lor(double fq, double[:] pars, int ik):
+    """Derivative of _psdf__lor"""
+    cdef double a, b, c, r
+    a = exp(pars[0]) # norm
+    b = exp(pars[1]) # fq_center
+    c = exp(pars[2]) #  fq_sigma
+    if ik == 0:
+        r = _psdf__lor(fq, pars)
+    elif ik == 1:
+        r = a*b*c*(fq-b)/(M_PI*pow(pow(-b+fq,2)+(c*c/4), 2))
+    else:
+        r = (-a*c*c*c/(4*M_PI*pow(pow(-b+fq,2)+(c*c/4), 2)) +
+            a*c/(2*M_PI*(pow(-b+fq,2)+(c*c/4))) )
+    return r
+
+cdef double _Dpsdf__lor0(double fq, double[:] pars, int ik):
+    """Derivative of _psdf__lor0"""
+    cdef double a, b, c, r
+    a = exp(pars[0]) # norm
+    c = exp(pars[1]) #  fq_sigma
+    if ik == 0:
+        r = _psdf__lor0(fq, pars)
+    elif ik == 1:
+        r = (-a*c*c*c/(4*M_PI*pow(pow(fq,2)+(c*c/4), 2)) +
+            a*c/(2*M_PI*(pow(fq,2)+(c*c/4))) )
+    return r
+
+cdef double _Dpsdf__plor(double fq, double[:] pars, int ik):
+    """Derivative of _psdf__plor"""
+    if ik < 2:
+        return _Dpsdf__pl(fq, pars[:2], ik)
+    else:
+        return _Dpsdf__lor(fq, pars[2:], ik-2)
+
+cdef double _Dpsdf__2bpl(double fq, double[:] pars, int ik):
+    """Derivative of _psdf__2bpl"""
+    if ik < 3:
+        return _Dpsdf__bpl(fq, pars[:3], ik)
+    else:
+        return _Dpsdf__bpl(fq, pars[3:], ik-3)
+
+cdef double _Dpsdf__2lor(double fq, double[:] pars, int ik):
+    """Derivative of _psdf__2lor"""
+    if ik < 3:
+        return _Dpsdf__lor(fq, pars[:3], ik)
+    else:
+        return _Dpsdf__lor(fq, pars[3:], ik-3)
 
 
 cdef class psdf(PLagBin):
@@ -762,8 +849,9 @@ cdef class psdf(PLagBin):
     cdef:
         double norm
         double (*fmodel) (double, double[:])
+        double (*Dfmodel) (double, double[:], int)
         double[:] fq
-        int NFQ, do_sig
+        int NFQ
 
 
     def __init__(self, 
@@ -800,10 +888,9 @@ cdef class psdf(PLagBin):
         npar = self._identify_function(ifunc)
         if do_sig == 1: npar += 1
 
-        PLagBin.__init__(self, t, y, ye, dt, npar, FQL)
+        PLagBin.__init__(self, t, y, ye, dt, npar, FQL, do_sig)
         self.norm = self.mu**inorm
         self.NFQ = NFQ
-        self.do_sig = do_sig
     
 
     cdef int _identify_function(self, int ifunc):
@@ -820,21 +907,31 @@ cdef class psdf(PLagBin):
 
         if ifunc == 1:
             self.fmodel = &_psdf__pl
+            self.Dfmodel = &_Dpsdf__pl
             return 2
         elif ifunc == 2:
             self.fmodel = &_psdf__bpl
+            self.Dfmodel = &_Dpsdf__bpl
             return 3
         elif ifunc == 3:
             self.fmodel = &_psdf__lor
+            self.Dfmodel = &_Dpsdf__lor
             return 3
+        elif ifunc == 4:
+            self.fmodel = &_psdf__lor0
+            self.Dfmodel = &_Dpsdf__lor0
+            return 2
         elif ifunc == 13:
             self.fmodel = &_psdf__plor
+            self.Dfmodel = &_Dpsdf__plor
             return 5
         elif ifunc == 22:
             self.fmodel = &_psdf__2bpl
+            self.Dfmodel = &_Dpsdf__2bpl
             return 6
         elif ifunc == 33:
             self.fmodel = &_psdf__2lor
+            self.Dfmodel = &_Dpsdf__2lor
             return 6
 
 
@@ -845,26 +942,60 @@ cdef class psdf(PLagBin):
         cdef:
             int iu, k, k0, nfq = self.nfq
             double res, dum, norm = self.norm
+            double[:] f
+            double* fq = &self.fq[0]
+            double (*fmod) (double, double[:])
+        fmod = self.fmodel
         k0 = 1 if self.do_sig else 0
-
+        f = np.zeros(nfq, np.double)
+        for k in range(nfq):
+            f[k] = fmod(fq[k], params[k0:])
         for iu in range(self.nU):
             res = 0
             for k in range(nfq):
-                dum = self.fmodel(self.fq[k], params[k0:])
-                res += dum * self.cfq[k, iu]
+                res += f[k] * self.cfq[k, iu]
             self.cU[iu] = res * norm
 
 
-    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
-        """see @PLagBase.add_measurement_noise
-        """
+    cdef covariance_kernel_deriv(self, double[:] params, int ik):
+        """Numerical differentiation of fmodel"""
+        cdef:
+            int iu, k0, k, nfq = self.nfq
+            double res, norm = self.norm, h=1e-5
+            double[:] dum, p, df
+            double* fq = &self.fq[0]
+            double (*fmod) (double, double[:])
+        fmod = self.fmodel
+        k0 = 1 if self.do_sig else 0
+
+        if self.do_sig and ik==0:
+            self.cU[:] = 0.
+        else:
+            dum = np.zeros(4)
+            p = np.array(params[k0:])
+            df = np.zeros(nfq, np.double)
+            for k in range(nfq):
+                df[k] = self.Dfmodel(fq[k], p, ik-k0)
+
+            for iu in range(self.nU):
+                res = 0
+                for k in range(nfq):
+                    res += df[k] * self.cfq[k, iu]
+                self.cU[iu] = res * norm
+
+
+    cdef dCovariance(self, double[:] params, int ik):
+        """see @PLagBase.dCovariance"""
         cdef:
             int i, n = self.n
+            double* dCov = &self.dCov[0,0]
             double* sig2 = &self.sig2[0]
-            double fac = 1.0
-        if self.do_sig: fac = exp(params[0])
-        for i in range(n): arr[i*n+i] += sign*fac*sig2[i]
 
+        if self.do_sig and ik==0:
+            self.dCov[:, :] = 0
+            self.add_measurement_noise(params, dCov, 1)
+        else:
+            PLagBin.dCovariance(self, params, ik)
 
 
     def calculate_model(self, params):
