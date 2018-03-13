@@ -492,7 +492,7 @@ class plagCythonTest(unittest.TestCase):
         # do_sig=1 #
         p0 = np.array([0.5, 1.])
         p = plag._plag.lag([t,t], [t,t], [t,t], 1.0, fqL, 1, 1, p0, p0)
-        assert(p.npar == 3)
+        assert(p.npar == 2)
 
 
     def test_lag_logLikelihood(self):
@@ -513,7 +513,7 @@ class plagCythonTest(unittest.TestCase):
         # do_sig=1
         p0 = np.array([0, 1.])
         c = plag._plag.lag([t,t], [x,y], [x*0+0.1]*2, 1.0, fqL, 1, 1, p0, p0)
-        inp = np.array([0, 1., 0.1])
+        inp = np.array([1., 0.1])
         assert(l1 == c.logLikelihood(inp, 1, 0))
 
 
@@ -584,7 +584,7 @@ class plagCythonTest(unittest.TestCase):
         y = np.random.randn(n) + 4.5
         xe = x*0+0.01
         fqL = np.array([0.25,0.5])
-        inpars = np.array([0.5, .2, .1])
+        inpars = np.array([.2, .1])
         x0 = np.array([0.5, 1.])
         p = plag._plag.lag([t,t], [x,x], [xe,xe], dt, fqL, 0, 1, x0, x0)
         logLike1, g1, h = p.dLogLikelihood(inpars)
@@ -595,7 +595,7 @@ class plagCythonTest(unittest.TestCase):
             pp[i] = x
             return p.logLikelihood(pp, 1, 0)
         g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
-                    for i in range(3)]
+                    for i in range(2)]
         np.testing.assert_almost_equal(g1,g2, 4)
 
 
@@ -610,7 +610,7 @@ class plagCythonTest(unittest.TestCase):
         y = np.random.randn(n) + 4.5
         xe = x*0+0.01
         fqL = np.array([0.25,0.5])
-        inpars = np.array([0.5, .2, .1])
+        inpars = np.array([.2, .1])
         x0 = np.array([0.5, 1.])
         p = plag._plag.lag([t,t], [x,x], [xe,xe], dt, fqL, 1, 1, x0, x0)
         logLike1, g1, h = p.dLogLikelihood(inpars)
@@ -621,7 +621,7 @@ class plagCythonTest(unittest.TestCase):
             pp[i] = x
             return p.logLikelihood(pp, 1, 0)
         g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
-                    for i in range(3)]
+                    for i in range(2)]
         np.testing.assert_almost_equal(g1,g2, 4)
 
 

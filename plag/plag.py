@@ -329,11 +329,11 @@ class psdf(PLagCython):
 
 
 class lag(PLagCython):
-    """ PSD at predefined frequencies
+    """ CXD/LAG at predefined frequencies
     """
 
     def __init__(self, t, y, ye, dt, fqL, p1, p2, norm='rms', fit_sigma=False):
-        """A psd model to calculated psd at pre-defined
+        """A cxd/lag model to calculated psd at pre-defined
         frequencies. The normalization is defined by norm.
         Optionally, a sigma factor can be included as a fit parameter
 
@@ -343,11 +343,10 @@ class lag(PLagCython):
             ye: np.ndarray of the 1-sigma measurement errors.
             dt: time sampling
             fqL: a list of array of frequency bin boundaries.
+            p1: psd parameters for the first light curve
+            p2: psd parameters for the second light curve
             norm: var|leahy|rms
             fit_sigma: include a sigma factor an additional free parameter
-            .
-            .
-            .
 
         """
         inorm = 2

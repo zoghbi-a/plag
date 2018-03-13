@@ -1,7 +1,7 @@
 
 import numpy as np
 cimport numpy as np
-np.import_array()
+#np.import_array()
 cimport scipy.linalg.cython_lapack as lapack
 cimport scipy.linalg.cython_blas as blas
 from libc.math cimport log, sin, cos, fabs, sqrt, pow, M_PI, exp
@@ -10,9 +10,11 @@ cimport dlfcn
 ## -- sine/cosine integrals   -- ##
 ## -- sici from scipy.special -- ##
 import scipy.special as sp
+from distutils.sysconfig import get_config_var
+name_suffix = get_config_var('EXT_SUFFIX')
 ctypedef  int(*sici_t)(double, double*, double*)
 cdef sici_t sici = <sici_t>dlfcn.load_func(
-    sp.__path__[0]+'/_ufuncs.so', 'cephes_sici')
+   (sp.__path__[0] + '/_ufuncs' + name_suffix).encode(), 'cephes_sici')
 ## ----------------------------- ##
 
 
@@ -632,7 +634,7 @@ cdef class lag(PLagBin):
         cdef:
             int npar = 2*(fqL.shape[0] - 1)
             np.ndarray t, y, ye
-        if do_sig == 1: npar += 1
+        #if do_sig == 1: npar += 1
 
         self.pm1 = psd(T[0], Y[0], Ye[0], dt, fqL, inorm, do_sig)
         self.pm2 = psd(T[1], Y[1], Ye[1], dt, fqL, inorm, do_sig)
@@ -643,6 +645,7 @@ cdef class lag(PLagBin):
         t  = np.concatenate((T[0], T[1]))
         y  = np.concatenate((Y[0]-self.pm1.mu, Y[1]-self.pm2.mu))
         ye = np.concatenate((Ye[0], Ye[1]))
+        do_sig = 0
         PLagBin.__init__(self, t, y, ye, dt, npar, fqL, do_sig)
 
 

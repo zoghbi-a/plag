@@ -1,3 +1,3 @@
 
-import _plag
-from plag import *
+from . import _plag
+from .plag import *

@@ -438,6 +438,168 @@ def simulate_lag_cython():
     np.savez('lag_cython.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
 
 
+def simulate_lag_cython_2():
+    """Run a simple plag psd/lag simulation. do_sig=1"""
+
+    # input #
+    sim_input['psdpar'] = ['broken_powerlaw', [.2, -1, -2, 1e-3]]
+    for k in ['norm', 'dt', 'psdpar', 'lag', 'phase']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    sim_input['infqL'] = 4
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None, dolag=1)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL([t[0] for t in T])
+        
+        p0 = np.ones(len(fqL))
+        pm1 = plag._plag.psd(T[0][0], R[0][0], E[0][0], dt, fqL, inorm, 1)
+        pm2 = plag._plag.psd(T[0][1], R[0][1], E[0][1], dt, fqL, inorm, 1)
+        res1 = opt.minimize(neg_dlnlike, p0, args=(pm1,), jac=True, 
+            method='L-BFGS-B', bounds=[(-10,2)]+[(-15,15)]*len(fq))
+        res2 = opt.minimize(neg_dlnlike, p0, args=(pm2,), jac=True, 
+            method='L-BFGS-B', bounds=[(-10,1)]+[(-15,15)]*len(fq))
+
+        c0 = np.concatenate(((res1.x+res2.x)*0.3, np.random.randn(len(fq))*0.01))
+        cm  = plag._plag.lag(T[0], R[0], E[0], dt, fqL, inorm, 1, res1.x, res2.x)
+        
+        res = opt.minimize(neg_lnlike, c0, args=(cm,), method='Powell')
+        res = opt.minimize(neg_dlnlike, res.x, args=(cm,), jac=True, method='L-BFGS-B', 
+            bounds=[(-10,1)]+[(-15,15)]*len(fq)+[(-np.pi,np.pi)]*len(fq))
+        
+        
+        sims.append(np.concatenate((res1.x, res2.x, res.x)))
+    sims = np.array(sims)
+    sm, ss = np.median(sims, 0), np.std(sims, 0)
+    sim = _simulate_lc(None, return_sim=1, dolag=1)
+    fm, pm = sim.psd_model[:,1:]
+    fm, lm = np.array(sim.lag_model)[:,1:]
+    ii = np.logical_and(fm>fq[0], fm<fq[-1])
+    fm, pm, lm = fm[ii], pm[ii], lm[ii]
+    nfq = len(fq)
+
+    ax = plt.subplot(1, 2, 1); ax.set_ylim([-3, 8])
+    plt.semilogx(fm, np.log(pm))
+    plt.errorbar(fq, sm[1:(nfq+1)], ss[1:(nfq+1)], fmt='o')
+    plt.errorbar(fq, sm[(nfq+2):(2*nfq+2)], ss[(nfq+2):(2*nfq+2)], fmt='o')
+    plt.errorbar(fq, sm[(2*nfq+3):(3*nfq+3)], ss[(2*nfq+3):(3*nfq+3)], fmt='o')
+
+    ax = plt.subplot(1, 2, 2); ax.set_ylim([-3, 3])
+    plt.semilogx(fm, lm)
+    plt.errorbar(fq, sm[(3*nfq+3):], ss[(3*nfq+3):], fmt='o')
+
+    plt.savefig('lag_cython_2.png')
+    
+
+
+def simulate_psd():
+    """Run a simple plag psd simulation. do_sig=0"""
+
+    # input #
+    for k in ['norm', 'dt', 'psdpar']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL(T)
+        
+        model = plag.PLag('psd', T, R, E, dt, fqL, norm, False)
+        p0 = np.ones(len(fqL)-1)
+        # res = opt.minimize(neg_dlnlike, p0, args=(model,), jac=True, 
+        #     method='L-BFGS-B', bounds=[(-15,15)]*len(fq))
+        r = plag.optimize(model, p0, verbose=0)
+        if np.any(r[1]>1e4): continue
+        sims.append(r[:2])
+    sims = np.array(sims)
+    sm, ss = np.median(sims[:,0], 0), np.std(sims[:,0], 0)
+    se = np.mean(sims[:,1], 0)
+    sim = _simulate_lc(None, return_sim=1)
+    fm, pm = sim.psd_model[:,1:]
+    ii = np.logical_and(fm>fq[0], fm<fq[-1])
+    fm, pm = fm[ii], pm[ii]
+    plt.semilogx(fm, np.log(pm))
+    plt.errorbar(fq, sm, ss, fmt='o')
+    plt.fill_between(fq, sm-se, sm+se)
+    plt.savefig('psd.png')
+    np.savez('psd.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
+
+
+def simulate_lag():
+    """Run a simple plag psd/lag simulation. do_sig=0"""
+
+    # input #
+    sim_input['psdpar'] = ['broken_powerlaw', [.2, -1, -2, 1e-3]]
+    for k in ['norm', 'dt', 'psdpar', 'lag', 'phase']:
+        exec('{0} = sim_input["{0}"]'.format(k))
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    sim_input['infqL'] = 4
+    sim_input['seglen'] = 64
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None, dolag=1)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL([t[0] for t in T])
+        
+
+        p0 = np.ones(len(fqL)-1)
+        pm1 = plag.PLag('psd', [t[0] for t in T], 
+            [r[0] for r in R], [e[0] for e in E], dt, fqL, norm, False)
+        pm2 = plag.PLag('psd', [t[1] for t in T], 
+            [r[1] for r in R], [e[1] for e in E], dt, fqL, norm, False)
+        res1 = plag.optimize(pm1, p0, verbose=0)[0]
+        res2 = plag.optimize(pm2, p0, verbose=0)[0]
+    
+        c0 = np.concatenate(((res1+res2)*0.3, np.random.randn(len(fq))*0.01))
+        cm  = plag.PLag('lag', T, R, E, dt, fqL, res1, res2, norm, False)
+
+        res = plag.optimize(cm, c0)[0]
+        
+        sims.append(np.concatenate((res1, res2, res)))
+    sims = np.array(sims)
+    sm, ss = np.median(sims, 0), np.std(sims, 0)
+    sim = _simulate_lc(None, return_sim=1, dolag=1)
+    fm, pm = sim.psd_model[:,1:]
+    fm, lm = np.array(sim.lag_model)[:,1:]
+    ii = np.logical_and(fm>fq[0], fm<fq[-1])
+    fm, pm, lm = fm[ii], pm[ii], lm[ii]
+    nfq = len(fq)
+
+    ax = plt.subplot(1, 2, 1); ax.set_ylim([-3, 8])
+    plt.semilogx(fm, np.log(pm))
+    plt.errorbar(fq, sm[:nfq], ss[:nfq], fmt='o')
+    plt.errorbar(fq, sm[nfq:2*nfq], ss[nfq:2*nfq], fmt='o')
+    plt.errorbar(fq, sm[2*nfq:3*nfq], ss[2*nfq:3*nfq], fmt='o')
+
+    ax = plt.subplot(1, 2, 2); ax.set_ylim([-3, 3])
+    plt.semilogx(fm, lm)
+    plt.errorbar(fq, sm[3*nfq:], ss[3*nfq:], fmt='o')
+
+    plt.savefig('lag.png')
+    np.savez('lag.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
+
 
 if __name__ == '__main__':
 
@@ -460,6 +622,13 @@ if __name__ == '__main__':
 
     p.add_argument('--lag_cython', action='store_true', default=False,
             help='Simulate lag_cython with do_sig=0')
+    p.add_argument('--lag_cython_2', action='store_true', default=False,
+            help='Simulate lag_cython with do_sig=1')
+
+    p.add_argument('--psd', action='store_true', default=False,
+            help='Simulate psd with do_sig=0')
+    p.add_argument('--lag', action='store_true', default=False,
+            help='Simulate lag with do_sig=0')
 
     args = p.parse_args()
 
@@ -467,20 +636,24 @@ if __name__ == '__main__':
     ## psd ##
     if args.psd_cython:
         simulate_psd_cython()
-
     if args.psd_cython_2:
         simulate_psd_cython_2()
-
     if args.psdf_cython:
         simulate_psdf_cython()
-
     if args.psdf_cython_2:
         simulate_psdf_cython_2()
-
     if args.psdf_cython_3:
         simulate_psdf_cython_3()
 
 
     if args.lag_cython:
         simulate_lag_cython()
+    if args.lag_cython_2:
+        simulate_lag_cython_2()
+
+    if args.psd:
+        simulate_psd()
+
+    if args.lag:
+        simulate_lag()
 
