@@ -1,10 +1,8 @@
 #!/usr/bin/env python
-from __future__ import print_function
-from __future__ import division
 
 import argparse
 import numpy as np
-import az
+import aztools as az
 import scipy.optimize as opt
 
 import matplotlib as mpl
@@ -25,7 +23,7 @@ sim_input = {
     'dt'    : 1.0,
     'mean'  : 100.,
     'norm'  : 'var',
-    'psdpar': ['powerlaw', [0.08, -2]],
+    'psdpar': ['powerlaw', [8, -2]],
     'seglen': 128,
     'infqL' : 6,
     'gnoise': 0.1,
@@ -50,11 +48,16 @@ def _simulate_lc(seed=34789, return_sim=False, dolag=False):
     """
 
     # input #
-    for k in ['n', 'dt', 'mean', 'psdpar', 'norm', 'gnoise', 'seglen']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    n      = sim_input['n']
+    dt     = sim_input['dt']
+    mean   = sim_input['mean']
+    psdpar = sim_input['psdpar']
+    norm   = sim_input['norm']
+    gnoise = sim_input['gnoise']
+    seglen = sim_input['seglen']
 
 
-    sim = az.SimLc(seed=seed)
+    sim = az.SimLC(seed=seed)
     sim.add_model(*psdpar)
     sim.simulate(16*n, dt/4, mean, norm)
     if dolag:
@@ -106,8 +109,8 @@ def _get_fqL(tseg):
     """
 
     # input #
-    for k in ['dt', 'infqL']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    dt    = sim_input['dt']
+    infqL = sim_input['infqL'] 
 
 
     # limits from the data #
@@ -118,7 +121,7 @@ def _get_fqL(tseg):
     if not isinstance(infqL, (list, np.ndarray)):
         if infqL>0:
             fqL = np.logspace(np.log10(f2), np.log10(f3), infqL+5)
-            fqL = fqL[[0, 2, 4] + range(5, infqL+4)]
+            fqL = fqL[[0, 2, 4] + list(range(5, infqL+4))]
         else:
             fqL = np.linspace(f2, f3, -infqL+5)
             fqL = fqL[[0, 2, 4] + range(5, -infqL+4)]
@@ -145,8 +148,9 @@ def simulate_psd_cython():
     """Run a simple plag psd simulation. do_sig=0"""
 
     # input #
-    for k in ['norm', 'dt', 'psdpar']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar'] 
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
 
@@ -173,7 +177,7 @@ def simulate_psd_cython():
     sims = np.array(sims)
     sm, ss = np.median(sims, 0), np.std(sims, 0)
     sim = _simulate_lc(None, return_sim=1)
-    fm, pm = sim.psd_model[:,1:]
+    fm, pm = sim.normalized_psd[:,1:]
     ii = np.logical_and(fm>fq[0], fm<fq[-1])
     fm, pm = fm[ii], pm[ii]
     plt.semilogx(fm, np.log(pm))
@@ -186,8 +190,9 @@ def simulate_psd_cython_2():
     """Run a simple plag psd simulation. do_sig=1"""
 
     # input #
-    for k in ['norm', 'dt', 'psdpar']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar'] 
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
 
@@ -214,7 +219,7 @@ def simulate_psd_cython_2():
     sims = np.array(sims)
     sm, ss = np.median(sims, 0), np.std(sims, 0)
     sim = _simulate_lc(None, return_sim=1)
-    fm, pm = sim.psd_model[:,1:]
+    fm, pm = sim.normalized_psd[:,1:]
     ii = np.logical_and(fm>fq[0], fm<fq[-1])
     fm, pm = fm[ii], pm[ii]
     plt.semilogx(fm, np.log(pm))
@@ -229,8 +234,10 @@ def simulate_psdf_cython():
     """Run a simple plag psdf simulation. do_sig=0; ifunc=1"""
 
     # input #
-    for k in ['norm', 'dt', 'psdpar']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar'] 
+
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
 
@@ -258,7 +265,7 @@ def simulate_psdf_cython():
     fs = smod[0,0]
     ms, ss = np.median(smod[:,1], 0), np.std(smod[:,1], 0)
     sim = _simulate_lc(None, return_sim=1)
-    fm, pm = sim.psd_model[:,1:]
+    fm, pm = sim.normalized_psd[:,1:]
     ii = np.logical_and(fm>fqL[0], fm<fqL[-1])
     fm, pm = fm[ii], pm[ii]
     plt.semilogx(fm, np.log(pm), lw=4)
@@ -271,8 +278,9 @@ def simulate_psdf_cython_2():
     """Run a simple plag psdf simulation. do_sig=1; ifunc=1"""
 
     # input #
-    for k in ['norm', 'dt', 'psdpar']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar'] 
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
 
@@ -301,7 +309,7 @@ def simulate_psdf_cython_2():
     fs = smod[0,0]
     ms, ss = smod[:,1].mean(0), smod[:,1].std(0)
     sim = _simulate_lc(None, return_sim=1)
-    fm, pm = sim.psd_model[:,1:]
+    fm, pm = sim.normalized_psd[:,1:]
     ii = np.logical_and(fm>fqL[0], fm<fqL[-1])
     fm, pm = fm[ii], pm[ii]
     plt.semilogx(fm, np.log(pm), lw=4)
@@ -316,11 +324,15 @@ def simulate_psdf_cython_3():
     """
 
     # input #
-    for k in ['n', 'dt', 'mean', 'norm', 'gnoise', 'seglen']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    n      = sim_input['n']
+    dt     = sim_input['dt']
+    mean   = sim_input['mean']
+    norm   = sim_input['norm']
+    gnoise = sim_input['gnoise'] 
+    seglen = sim_input['seglen']
 
     psdpar = [['powerlaw', [0.08, -2]], ['lorentz', [50, 8e-2, 1e-2]]]
-    sim = az.SimLc(seed=None)
+    sim = az.SimLC(seed=None)
     sim.add_model(*psdpar[0])
     sim.add_model(psdpar[1][0], psdpar[1][1], clear=False)
     
@@ -364,7 +376,7 @@ def simulate_psdf_cython_3():
     fs = smod[0,0]
     ms, ss = smod[:,1].mean(0), smod[:,1].std(0)
 
-    fm, pm = sim.psd_model[:,1:]
+    fm, pm = sim.normalized_psd[:,1:]
     ii = np.logical_and(fm>fqL[0], fm<fqL[-1])
     fm, pm = fm[ii], pm[ii]
     plt.semilogx(fm, np.log(pm), lw=4)
@@ -379,8 +391,12 @@ def simulate_lag_cython():
 
     # input #
     sim_input['psdpar'] = ['broken_powerlaw', [.2, -1, -2, 1e-3]]
-    for k in ['norm', 'dt', 'psdpar', 'lag', 'phase']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar']
+    lag    = sim_input['lag']
+    phase  = sim_input['phase']
+
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
     sim_input['infqL'] = 4
@@ -418,8 +434,8 @@ def simulate_lag_cython():
     sims = np.array(sims)
     sm, ss = np.median(sims, 0), np.std(sims, 0)
     sim = _simulate_lc(None, return_sim=1, dolag=1)
-    fm, pm = sim.psd_model[:,1:]
-    fm, lm = np.array(sim.lag_model)[:,1:]
+    fm, pm = sim.normalized_psd[:,1:]
+    fm, lm = np.array(sim.normalized_lag)[:,1:]
     ii = np.logical_and(fm>fq[0], fm<fq[-1])
     fm, pm, lm = fm[ii], pm[ii], lm[ii]
     nfq = len(fq)
