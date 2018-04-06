@@ -366,6 +366,41 @@ class lag(PLagCython):
         return p
 
 
+class psdlag(PLagCython):
+    """ PSD/CXD/LAG at predefined frequencies
+    """
+
+    def __init__(self, t, y, ye, dt, fqL, norm='rms', fit_sigma=False):
+        """A cxd/lag model to calculated psd at pre-defined
+        frequencies. The normalization is defined by norm.
+        Optionally, a sigma factor can be included as a fit parameter
+
+        Args:
+            t: np.ndarray of time axis
+            y: np.ndarray of corresponding rates
+            ye: np.ndarray of the 1-sigma measurement errors.
+            dt: time sampling
+            fqL: a list of array of frequency bin boundaries.
+            norm: var|leahy|rms
+            fit_sigma: include a sigma factor an additional free parameter
+
+        """
+        inorm = 2
+        if norm == 'var': inorm = 0
+        if norm == 'leahy': inorm = 1
+        do_sig = 1 if fit_sigma else 0
+        super(self.__class__, self).__init__(
+            'psdlag', t, y, ye, dt, np.array(fqL, np.double), inorm, do_sig)
+
+
+    def step_param(self, par, dpar):
+        __doc__ = super(self.__class__, self).step_param.__doc__
+        dpar = np.clip(dpar, -2, 2)
+        p = par + dpar
+        p = np.clip(p, -20, 20)
+        return p
+
+
 def optimize(mod, p0, ip_fix=None, maxiter=500, tol=1e-4, verbose=1):
     """Simple optimization routine that uses the
         Quadaratic approximation. From the calculated gradient 

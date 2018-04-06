@@ -462,6 +462,7 @@ def simulate_lag_cython_2():
     for k in ['norm', 'dt', 'psdpar', 'lag', 'phase']:
         exec('{0} = sim_input["{0}"]'.format(k))
 
+
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
     sim_input['infqL'] = 4
 
@@ -520,8 +521,9 @@ def simulate_psd():
     """Run a simple plag psd simulation. do_sig=0"""
 
     # input #
-    for k in ['norm', 'dt', 'psdpar']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar ']
 
 
     sims = []
@@ -561,8 +563,11 @@ def simulate_lag():
 
     # input #
     sim_input['psdpar'] = ['broken_powerlaw', [.2, -1, -2, 1e-3]]
-    for k in ['norm', 'dt', 'psdpar', 'lag', 'phase']:
-        exec('{0} = sim_input["{0}"]'.format(k))
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar']
+    lag    = sim_input['lag']
+    phase  = sim_input['phase']
 
     inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
     sim_input['infqL'] = 4
@@ -617,6 +622,73 @@ def simulate_lag():
     np.savez('lag.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
 
 
+def simulate_psdlag():
+    """Run a simple plag psdlag simulation. do_sig=0"""
+
+    # input #
+    sim_input['psdpar'] = ['broken_powerlaw', [.2, -1, -2, 1e-3]]
+    norm   = sim_input['norm']
+    dt     = sim_input['dt']
+    psdpar = sim_input['psdpar']
+    lag    = sim_input['lag']
+    phase  = sim_input['phase']
+
+    inorm = 0 if norm == 'var' else 1 if norm == 'leahy' else 2
+    sim_input['infqL'] = 4
+    sim_input['seglen'] = 64
+
+    sims = []
+    for isim in range(1, args.nsim+1):
+
+        az.misc.print_progress(isim, args.nsim+1, isim==args.nsim)
+
+        # simulate lc #
+        T, R, E = _simulate_lc(None, dolag=1)
+
+        # get frequncy bins #
+        fqL, fq = _get_fqL([t[0] for t in T])
+        
+
+        p0 = np.ones(len(fqL)-1)
+        pm1 = plag.PLag('psd', [t[0] for t in T], 
+            [r[0] for r in R], [e[0] for e in E], dt, fqL, norm, False)
+        pm2 = plag.PLag('psd', [t[1] for t in T], 
+            [r[1] for r in R], [e[1] for e in E], dt, fqL, norm, False)
+        res1 = plag.optimize(pm1, p0, verbose=0)[0]
+        res2 = plag.optimize(pm2, p0, verbose=0)[0]
+    
+        c0 = np.concatenate(((res1+res2)*0.3, np.random.randn(len(fq))*0.01))
+        cm  = plag.PLag('lag', T, R, E, dt, fqL, res1, res2, norm, False)
+        res = plag.optimize(cm, c0)[0]
+
+        c0 = np.concatenate((res1, res2, res))
+        plm = plag.PLag('psdlag', T, R, E, dt, fqL, norm, False)
+        Res = plag.optimize(plm, c0)[0]
+        
+        sims.append(np.concatenate((res1, res2, res, Res)))
+    sims = np.array(sims)
+    embed();exit(0)
+    sm, ss = np.median(sims, 0), np.std(sims, 0)
+    sim = _simulate_lc(None, return_sim=1, dolag=1)
+    fm, pm = sim.psd_model[:,1:]
+    fm, lm = np.array(sim.lag_model)[:,1:]
+    ii = np.logical_and(fm>fq[0], fm<fq[-1])
+    fm, pm, lm = fm[ii], pm[ii], lm[ii]
+    nfq = len(fq)
+
+    ax = plt.subplot(1, 2, 1); ax.set_ylim([-3, 8])
+    plt.semilogx(fm, np.log(pm))
+    plt.errorbar(fq, sm[:nfq], ss[:nfq], fmt='o')
+    plt.errorbar(fq, sm[nfq:2*nfq], ss[nfq:2*nfq], fmt='o')
+    plt.errorbar(fq, sm[2*nfq:3*nfq], ss[2*nfq:3*nfq], fmt='o')
+
+    ax = plt.subplot(1, 2, 2); ax.set_ylim([-3, 3])
+    plt.semilogx(fm, lm)
+    plt.errorbar(fq, sm[3*nfq:], ss[3*nfq:], fmt='o')
+
+    plt.savefig('lag.png')
+    np.savez('lag.npz', sims=sims, fq=fq, fqL=fqL, sim_input=sim_input)
+
 if __name__ == '__main__':
 
     p = argparse.ArgumentParser(                                
@@ -645,6 +717,8 @@ if __name__ == '__main__':
             help='Simulate psd with do_sig=0')
     p.add_argument('--lag', action='store_true', default=False,
             help='Simulate lag with do_sig=0')
+    p.add_argument('--psdlag', action='store_true', default=False,
+            help='Simulate psdlag with do_sig=0')
 
     args = p.parse_args()
 
@@ -672,4 +746,7 @@ if __name__ == '__main__':
 
     if args.lag:
         simulate_lag()
+
+    if args.psdlag:
+        simulate_psdlag()
 
