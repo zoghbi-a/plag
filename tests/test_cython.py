@@ -766,3 +766,133 @@ class plagCythonTest(unittest.TestCase):
         g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
                     for i in range(6)]
         np.testing.assert_almost_equal(g1,g2, 4)
+
+
+
+    
+    def test_lagf_init(self):
+        """Test the initialization of flag
+        """
+        t = np.arange(4, dtype=np.double)
+        fqL = np.array([0.25,0.5])
+        p0 = np.array([1., 1.0])
+        ifunc = np.array([1,1,1,1], np.int32)
+        p = plag._plag.lagf([t,t], [t,t], [t,t], 1.0, fqL, 1, 0, p0, p0, ifunc, 10)
+        assert(p.n == 8)
+        assert(p.mu == 0)
+        assert(p.nfq == 9)
+        assert(p.npar == 4)
+
+        # do_sig=1 #
+        p0 = np.array([0.5, 1., 1.0])
+        p = plag._plag.lagf([t,t], [t,t], [t,t], 1.0, fqL, 1, 1, p0, p0, ifunc, 10)
+        assert(p.npar == 4)
+
+
+    def test_lagf_logLikelihood(self):
+        """Test that logLikelihood of lagf runs
+        """
+        n = 12
+        t = np.arange(n, dtype=np.double)
+        fqL = np.array([1./12,0.5])
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.1
+        p0 = np.array([0.0, 1.])
+        ifunc = np.array([1,1,1,1], np.int32)
+        c = plag._plag.lagf([t,t], [x,y], [x*0+1.]*2, 1.0, fqL, 1, 0, p0, p0, ifunc, 10)
+        inp = np.array([0.0, 1.0 ,0.0, 0.0])
+        l1 = c.logLikelihood(inp, 1, 0)
+        assert(np.isfinite(l1))
+        
+
+        # do_sig=1
+        p0 = np.array([0, 0.0, 1.])
+        c = plag._plag.lagf([t,t], [x,y], [x*0+1.0]*2, 1.0, fqL, 1, 1, p0, p0, ifunc, 10)
+        inp = np.array([0.0, 1.0 ,0.0, 0.0])
+        assert(l1 == c.logLikelihood(inp, 1, 0))
+
+
+    def test_lagf_norm(self):
+        """Test that norm in lagf works
+        """
+        n = 12
+        t = np.arange(n, dtype=np.double)
+        fqL = np.array([1./12,0.5])
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.1
+        ifunc = np.array([1,1,1,1], np.int32)
+
+        x0 = np.array([0.0, 1.])
+        p0 = plag._plag.lagf([t,t], [x,y], [x*0+1.0]*2, 1.0, fqL, 0, 0, x0, x0, ifunc, 10)
+        x0_1 = np.array([np.log(np.exp(0.0)/x.mean()), 1.0])
+        x0_2 = np.array([np.log(np.exp(0.0)/y.mean()), 1.0])
+        p1 = plag._plag.lagf([t,t], [x,y], [x*0+1.0]*2, 1.0, fqL, 1, 0, x0_1, x0_2, ifunc, 10)
+        x0_1 = np.array([np.log(np.exp(0.)/x.mean()**2), 1.0])
+        x0_2 = np.array([np.log(np.exp(0.)/y.mean()**2), 1.0])
+        p2 = plag._plag.lagf([t,t], [x,y], [x*0+1.0]*2, 1.0, fqL, 2, 0, x0_1, x0_2, ifunc, 10)
+
+        inp = np.array([0.0, 1.0 ,0.0, 0.0])
+        mu = (x.mean()*y.mean())**0.5
+        l0 = p0.logLikelihood(inp, 1, 0)
+
+        inp = np.array([np.log(np.exp(0.)/mu), 1.0 ,0.0, 0.0])
+        l1 = p1.logLikelihood(inp, 1, 0)
+        inp = np.array([np.log(np.exp(0.)/mu**2), 1.0 ,0.0, 0.0])
+        l2 = p2.logLikelihood(inp, 1, 0)
+        np.testing.assert_almost_equal(l0, l1)
+        np.testing.assert_almost_equal(l0, l2)
+
+
+    def test_lagf_gradient_1(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for lagf with do_sig=0
+        """
+        np.random.seed(4897)
+        n, dt = 8, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.5
+        xe = x*0+1.0
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.0, 1.0, 0.0, 0.1])
+        x0 = np.array([0.0, 1.0])
+        ifunc = np.array([1,1,1,1], np.int32)
+        p = plag._plag.lagf([t,t], [x,x], [xe,xe], dt, fqL, 0, 0, x0, x0, ifunc, 10)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i, inp):
+            pp = np.array(inp)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
+                    for i in range(4)]
+        np.testing.assert_almost_equal(g1,g2, 6)
+
+
+    def test_lagf_gradient_2(self):
+        """Test the gradient from dLogLikelihood
+        vs scipy.misc.derivative for lagf with do_sig=1
+        """
+        np.random.seed(4897)
+        n, dt = 8, 1.0
+        t = np.arange(n, dtype=np.double)
+        x = np.random.randn(n) + 4
+        y = np.random.randn(n) + 4.5
+        xe = x*0+1.0
+        fqL = np.array([0.25,0.5])
+        inpars = np.array([0.0, 1.0, 0.0, 0.1])
+        x0 = np.array([0.1, 0.0, 1.0])
+        ifunc = np.array([1,1,1,1], np.int32)
+        p = plag._plag.lagf([t,t], [x,x], [xe,xe], dt, fqL, 0, 1, x0, x0, ifunc, 10)
+        logLike1, g1, h = p.dLogLikelihood(inpars)
+        
+        from scipy.misc import derivative
+        def fun(x, i, inp):
+            pp = np.array(inp)
+            pp[i] = x
+            return p.logLikelihood(pp, 1, 0)
+        g2 = [derivative(fun, inpars[i], 1e-4, 1, (i,inpars)) 
+                    for i in range(4)]
+        np.testing.assert_almost_equal(g1,g2, 6)
+

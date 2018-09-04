@@ -366,6 +366,68 @@ class lag(PLagCython):
         return p
 
 
+class lagf(PLagCython):
+    """ CXD/LAG at pre-defined functions
+    """
+
+    def __init__(self, t, y, ye, dt, fqL, p1, p2, ifunc=[1,1,1,1], 
+                    norm='rms', fit_sigma=False, NFQ=50):
+        """A model to model the cxd/lag at pre-defined
+        frequencies. The normalization is defined by norm.
+        Optionally, a sigma factor can be included as a fit parameter
+
+        Args:
+            t: np.ndarray of time axis
+            y: np.ndarray of corresponding rates
+            ye: np.ndarray of the 1-sigma measurement errors.
+            dt: time sampling
+            fqL: a list of array of frequency bin boundaries.
+            p1: psd parameters for the first light curve
+            p2: psd parameters for the second light curve
+            ifunc: a list of 4 elements giving the functions to use. The four numbers
+                    are [psd_1, psd_2, cxd, lag]
+                1: powerlaw
+                2: bending powerlaw
+                3: lorentzian with 3 parameters
+                4: 0-centered lorentzian with 2 params
+                13: PL + lorentzian
+                22: bending PL + bending PL
+                33: lorentzian + lorentzian
+            norm: var|leahy|rms
+            fit_sigma: include a sigma factor an additional free parameter
+            NFQ: how many frequency bins to use internally to calculate the 
+                integrals
+
+        """
+        inorm = 2
+        if norm == 'var': inorm = 0
+        if norm == 'leahy': inorm = 1
+        do_sig = 1 if fit_sigma else 0
+        super(self.__class__, self).__init__(
+            'lagf', t, y, ye, dt, np.array(fqL, np.double), inorm, do_sig,
+            np.array(p1, np.double), np.array(p2, np.double), np.array(ifunc, np.int32), NFQ)
+
+
+    def step_param(self, par, dpar):
+        __doc__ = super(self.__class__, self).step_param.__doc__
+        dpar = np.clip(dpar, -2, 2)
+        p = par + dpar
+        p = np.clip(p, -20, 20)
+        return p
+
+
+    def calculate_model(self, pars):
+        """Calculate the cxd/lag model given the input
+            parameters at the frequencies resolution
+            defined in the model
+
+        Args:
+            pars: model parameters
+
+        """
+        return self.mod.calculate_model(np.array(pars, np.double))
+
+
 class psdlag(PLagCython):
     """ PSD/CXD/LAG at predefined frequencies
     """

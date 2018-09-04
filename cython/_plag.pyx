@@ -5,17 +5,7 @@ cimport numpy as np
 cimport scipy.linalg.cython_lapack as lapack
 cimport scipy.linalg.cython_blas as blas
 from libc.math cimport log, sin, cos, fabs, sqrt, pow, M_PI, exp
-cimport dlfcn
-
-## -- sine/cosine integrals   -- ##
-## -- sici from scipy.special -- ##
-import scipy.special as sp
-from distutils.sysconfig import get_config_var
-name_suffix = get_config_var('EXT_SUFFIX')
-ctypedef  int(*sici_t)(double, double*, double*)
-cdef sici_t sici = <sici_t>dlfcn.load_func(
-   (sp.__path__[0] + '/_ufuncs' + name_suffix).encode(), 'cephes_sici')
-## ----------------------------- ##
+from scipy.special.cython_special cimport sici
 
 
 cdef class PLagBase:
@@ -605,6 +595,7 @@ cdef class lag(PLagBin):
         double norm
         int n1
         psd pm1, pm2
+        double[2] sig_fac
         double[::1,:] C1, C2
 
 
@@ -640,6 +631,8 @@ cdef class lag(PLagBin):
         self.pm2 = psd(T[1], Y[1], Ye[1], dt, fqL, inorm, do_sig)
         self.n1 = self.pm1.n
         self.norm = (self.pm1.mu * self.pm2.mu)**(inorm*0.5)
+        self.sig_fac[0] = exp(p1[0]) if do_sig else 1.0
+        self.sig_fac[1] = exp(p2[0]) if do_sig else 1.0
 
 
         t  = np.concatenate((T[0], T[1]))
@@ -653,8 +646,6 @@ cdef class lag(PLagBin):
         # the fixed part of the covariance matrix #
         self.pm1.Covariance(p1)
         self.pm2.Covariance(p2)
-        self.pm1.add_measurement_noise(p1, &self.pm1.Cov[0,0], 1)
-        self.pm2.add_measurement_noise(p2, &self.pm2.Cov[0,0], 1)
         self.C1 = np.array(self.pm1.Cov)
         self.C2 = np.array(self.pm2.Cov)
 
@@ -663,45 +654,37 @@ cdef class lag(PLagBin):
     cdef covariance_kernel(self, double[:] params):
         """see @PLagBase.covariance_kernel"""
         cdef:
-            int iu, k, k0, nfq = self.nfq
+            int iu, k, nfq = self.nfq
             double res, norm = self.norm
-
-        k0 = 1 if self.do_sig else 0
 
         for iu in range(self.nU):
             res = 0
             for k in range(nfq):
-                res += exp(params[k+k0]) * (self.cfq[k, iu]*cos(params[k+k0+nfq]) - 
-                                            self.sfq[k, iu]*sin(params[k+k0+nfq]))
+                res += exp(params[k]) * (self.cfq[k, iu]*cos(params[k+nfq]) - 
+                                         self.sfq[k, iu]*sin(params[k+nfq]))
             self.cU[iu] = res * norm
 
 
     cdef covariance_kernel_deriv(self, double[:] params, int ik):
         """see @PLagBase.covariance_kernel_deriv"""
         cdef:
-            int iu, k, k0, nfq = self.nfq
+            int iu, k, nfq = self.nfq
             double res, norm = self.norm, cx, phi
 
-        k0 = 1 if self.do_sig else 0
 
-        if self.do_sig and ik==0:
-            #self.cU[:] = 0.
-            # we do it in dCovariance
-            pass
+        if (ik)<nfq:
+            cx  = exp(params[ik]) * norm
+            phi = params[ik+nfq]
+            for iu in range(self.nU):
+                self.cU[iu] = cx * (
+                    self.cfq[ik, iu]*cos(phi) - self.sfq[ik, iu]*sin(phi))
         else:
-            if (ik-k0)<nfq:
-                cx  = exp(params[ik]) * norm
-                phi = params[ik+nfq]
-                for iu in range(self.nU):
-                    self.cU[iu] = cx * (
-                        self.cfq[ik-k0, iu]*cos(phi) - self.sfq[ik-k0, iu]*sin(phi))
-            else:
-                k   = ik - nfq
-                cx  = exp(params[k]) * norm
-                phi = params[ik]
-                for iu in range(self.nU):
-                    self.cU[iu] = cx * (
-                        -self.cfq[k-k0, iu]*sin(phi) - self.sfq[k-k0, iu]*cos(phi))
+            k   = ik - nfq
+            cx  = exp(params[k]) * norm
+            phi = params[ik]
+            for iu in range(self.nU):
+                self.cU[iu] = cx * (
+                    -self.cfq[k, iu]*sin(phi) - self.sfq[k, iu]*cos(phi))
 
 
     cdef Covariance(self, double[:] params):
@@ -717,16 +700,25 @@ cdef class lag(PLagBin):
         cdef:
             int n1 = self.n1, n = self.n, i, j
 
-        if self.do_sig and ik==0:
-            self.dCov[:, :] = 0
-            self.add_measurement_noise(params, &self.dCov[0,0], 1)
-        else:
-            PLagBin.dCovariance(self, params, ik)
-            for i in range(n1):
-                for j in range(n1): self.dCov[i, j] = 0
-                for j in range(n1, n): self.dCov[i, j] = self.dCov[j, i]
-            for i in range(n1,n):
-                for j in range(n1,n): self.dCov[i, j] = 0
+        PLagBin.dCovariance(self, params, ik)
+        for i in range(n1):
+            for j in range(n1): self.dCov[i, j] = 0
+            for j in range(n1, n): self.dCov[i, j] = self.dCov[j, i]
+        for i in range(n1,n):
+            for j in range(n1,n): self.dCov[i, j] = 0
+
+
+    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
+        """see @PLagBase.add_measurement_noise
+        """
+        cdef:
+            int i, n = self.n, n1 = self.n1
+            double* sig2 = &self.sig2[0]
+            double fac1 = self.sig_fac[0], fac2 = self.sig_fac[1]
+        for i in range(n1): 
+            arr[i*n+i] += sign*fac1*sig2[i]
+        for i in range(n1, n): 
+            arr[i*n+i] += sign*fac2*sig2[i]
 
 
 cdef class psdlag(PLagBin):
@@ -969,7 +961,7 @@ cdef double _Dpsdf__lor(double fq, double[:] pars, int ik):
 
 cdef double _Dpsdf__lor0(double fq, double[:] pars, int ik):
     """Derivative of _psdf__lor0"""
-    cdef double a, b, c, r
+    cdef double a, b, c, r=0
     a = exp(pars[0]) # norm
     c = exp(pars[1]) #  fq_sigma
     if ik == 0:
@@ -999,6 +991,49 @@ cdef double _Dpsdf__2lor(double fq, double[:] pars, int ik):
         return _Dpsdf__lor(fq, pars[:3], ik)
     else:
         return _Dpsdf__lor(fq, pars[3:], ik-3)
+
+cdef int _identify_function(int ifunc, double (**fmodel) (double, double[:]), 
+        double (**Dfmodel) (double, double[:], int)):
+    """Given the choice of ifunc, choose the psd or cxd/lag
+        function
+
+    Args:
+        ifunc: int. identifying the function
+        fmodel: pointer to the main function
+        Dfmodel: pointer to the derivative function
+    Returns:
+        number of parameters
+
+    """
+
+    if ifunc == 1:
+        fmodel[0]  = &_psdf__pl
+        Dfmodel[0] = &_Dpsdf__pl
+        return 2
+    elif ifunc == 2:
+        fmodel[0]  = &_psdf__bpl
+        Dfmodel[0] = &_Dpsdf__bpl
+        return 3
+    elif ifunc == 3:
+        fmodel[0]  = &_psdf__lor
+        Dfmodel[0] = &_Dpsdf__lor
+        return 3
+    elif ifunc == 4:
+        fmodel[0]  = &_psdf__lor0
+        Dfmodel[0] = &_Dpsdf__lor0
+        return 2
+    elif ifunc == 13:
+        fmodel[0]  = &_psdf__plor
+        Dfmodel[0] = &_Dpsdf__plor
+        return 5
+    elif ifunc == 22:
+        fmodel[0]  = &_psdf__2bpl
+        Dfmodel[0] = &_Dpsdf__2bpl
+        return 6
+    elif ifunc == 33:
+        fmodel[0]  = &_psdf__2lor
+        Dfmodel[0] = &_Dpsdf__2lor
+        return 6
 
 
 cdef class psdf(PLagBin):
@@ -1044,54 +1079,12 @@ cdef class psdf(PLagBin):
 
         self.fq = 10**((np.log10(FQL[1:]) + np.log10(FQL[:-1]))/2.)
 
-        npar = self._identify_function(ifunc)
+        npar = _identify_function(ifunc, &self.fmodel, &self.Dfmodel)
         if do_sig == 1: npar += 1
 
         PLagBin.__init__(self, t, y, ye, dt, npar, FQL, do_sig)
         self.norm = self.mu**inorm
         self.NFQ = NFQ
-    
-
-    cdef int _identify_function(self, int ifunc):
-        """Given the choice of ifunc, choose the psd
-            function
-
-        Args:
-            ifunc: int. identifying the function
-
-        Returns:
-            number of parameters
-
-        """
-
-        if ifunc == 1:
-            self.fmodel = &_psdf__pl
-            self.Dfmodel = &_Dpsdf__pl
-            return 2
-        elif ifunc == 2:
-            self.fmodel = &_psdf__bpl
-            self.Dfmodel = &_Dpsdf__bpl
-            return 3
-        elif ifunc == 3:
-            self.fmodel = &_psdf__lor
-            self.Dfmodel = &_Dpsdf__lor
-            return 3
-        elif ifunc == 4:
-            self.fmodel = &_psdf__lor0
-            self.Dfmodel = &_Dpsdf__lor0
-            return 2
-        elif ifunc == 13:
-            self.fmodel = &_psdf__plor
-            self.Dfmodel = &_Dpsdf__plor
-            return 5
-        elif ifunc == 22:
-            self.fmodel = &_psdf__2bpl
-            self.Dfmodel = &_Dpsdf__2bpl
-            return 6
-        elif ifunc == 33:
-            self.fmodel = &_psdf__2lor
-            self.Dfmodel = &_Dpsdf__2lor
-            return 6
 
 
     cdef covariance_kernel(self, double[:] params):
@@ -1174,4 +1167,216 @@ cdef class psdf(PLagBin):
         return np.asarray(self.fq), model
 
 
+cdef class lagf(PLagBin):
+    """Class for fitting functions directly to the cxd/lag"""
+
+    # global parameters #
+    cdef:
+        double norm
+        double (*cfmodel) (double, double[:])
+        double (*cDfmodel) (double, double[:], int)
+        double (*lfmodel) (double, double[:])
+        double (*lDfmodel) (double, double[:], int)
+        double[:] fq
+        double[2] sig_fac
+        int NFQ
+        int n1, npar1
+        psdf pm1, pm2
+        double[::1,:] C1, C2
+
+
+    def __init__(self, 
+            list T, list Y, list Ye, 
+            double dt, double[:] fqL, int inorm, int do_sig, 
+            double[:] p1, double[:] p2,
+            int[:] ifunc, int NFQ):
+        """Model cxd/lag using pre-defined functions.
+            The integration is approximated by NFQ bins.
+            fqL here has two elements, taken as the limit
+            of the integration
+
+        Args:
+            T: a list of two arrays of time axes for the two 
+                light curves
+            Y: a list of two arrays of rate values corresponding to T
+            Ye: 1-sigma measurement error corresponding to Y
+            dt: time sampling of the data
+            fqL: frequency bin boundaries of length 2
+            inorm: normalization type. 0:var, 1:leahy, 2:rms
+            do_sig: if == 1, include a parameter that multiplies
+                the measurement errors
+            p1: best fit psd parameters for light curve 1
+            p2: best fit psd parameters for light curve 2
+            ifunc: 4 int indicating what functional form to use for
+                psd1, psd2, cxd and lag
+            NFQ: how many points to use to approximate the integration
+
+        """
+        cdef:
+            int npar, i
+            double[:] FQL
+            np.ndarray t, y, ye
+        FQL = np.logspace(np.log10(fqL[0]), np.log10(fqL[1]), NFQ)
+        self.fq = 10**((np.log10(FQL[1:]) + np.log10(FQL[:-1]))/2.)
+
+        # the psd part #
+        self.pm1 = psdf(T[0], Y[0], Ye[0], dt, FQL, inorm, do_sig, ifunc[0], NFQ)
+        self.pm2 = psdf(T[1], Y[1], Ye[1], dt, FQL, inorm, do_sig, ifunc[1], NFQ)
+        self.n1  = self.pm1.n
+        self.norm = (self.pm1.mu * self.pm2.mu)**(inorm*0.5)
+        self.sig_fac[0] = exp(p1[0]) if do_sig else 1.0
+        self.sig_fac[1] = exp(p2[0]) if do_sig else 1.0
+
+        self.npar1 = _identify_function(ifunc[2], &self.cfmodel, &self.cDfmodel)
+        npar = self.npar1 + _identify_function(ifunc[3], &self.lfmodel, &self.lDfmodel)
+        
+        
+        t  = np.concatenate((T[0], T[1]))
+        y  = np.concatenate((Y[0]-self.pm1.mu, Y[1]-self.pm2.mu))
+        ye = np.concatenate((Ye[0], Ye[1]))
+        do_sig = 0
+        PLagBin.__init__(self, t, y, ye, dt, npar, FQL, do_sig)
+        self.NFQ = NFQ
+        self.do_sig = do_sig
+
+        # the fixed part of the covariance matrix #
+        self.pm1.Covariance(p1)
+        self.pm2.Covariance(p2)
+        self.C1 = np.array(self.pm1.Cov)
+        self.C2 = np.array(self.pm2.Cov)
+
+
+    cdef covariance_kernel(self, double[:] params):
+        """
+        params are: cfmodel and clmodel params
+        """
+        cdef:
+            int iu, k, nfq = self.nfq, npar1 = self.npar1
+            double res, dum, norm = self.norm
+            double[:] cf, lf
+            double* fq = &self.fq[0]
+            double (*cfmod) (double, double[:])
+            double (*lfmod) (double, double[:])
+            double[:] cpar = params[:npar1], lpar = params[npar1:]
+        cfmod = self.cfmodel
+        lfmod = self.lfmodel
+        cf = np.zeros(nfq, np.double)
+        lf = np.zeros(nfq, np.double)
+        for k in range(nfq):
+            cf[k] = cfmod(fq[k], cpar)
+            lf[k] = lfmod(fq[k], lpar)
+
+        for iu in range(self.nU):
+            res = 0
+            for k in range(nfq):
+                res += cf[k] * (self.cfq[k, iu]*cos(lf[k]) - 
+                                self.sfq[k, iu]*sin(lf[k]))
+            self.cU[iu] = res * norm
+
+    
+    cdef Covariance(self, double[:] params):
+        """see @PLagBase.Covariance"""
+        cdef int n1 = self.n1
+        PLagBin.Covariance(self, params)
+        self.Cov[:n1, :n1] = self.C1[:,:]
+        self.Cov[n1:, n1:] = self.C2[:,:]
+        cdef double[::1,:] c1 = np.array(self.Cov)
+        self.add_measurement_noise(params, &self.Cov[0,0], 1)
+
+
+
+    cdef covariance_kernel_deriv(self, double[:] params, int ik):
+        """see @PLagBase.covariance_kernel_deriv"""
+        cdef:
+            int iu, k, nfq = self.nfq, npar1 = self.npar1
+            double res, norm = self.norm
+            double[:] dfc, dfl, fc, fl
+            double* fq = &self.fq[0]
+            double (*cfmod) (double, double[:])
+            double (*lfmod) (double, double[:])
+            double (*cDfmod) (double, double[:], int)
+            double (*lDfmod) (double, double[:], int)
+            double[:] cpar = params[:npar1], lpar = params[npar1:]
+        cfmod  = self.cfmodel
+        lfmod  = self.lfmodel
+        cDfmod = self.cDfmodel
+        lDfmod = self.lDfmodel
+
+
+        dfc = np.zeros(nfq, np.double)
+        dfl = np.zeros(nfq, np.double)
+        fc  = np.zeros(nfq, np.double)
+        fl  = np.zeros(nfq, np.double)
+        for k in range(nfq):
+            fc[k]  = cfmod(fq[k], cpar)
+            fl[k]  = lfmod(fq[k], lpar)
+            dfc[k] = cDfmod(fq[k], cpar, ik)
+            dfl[k] = lDfmod(fq[k], lpar, ik)
+
+
+        if ik<npar1:
+            for k in range(nfq):
+                dfc[k] = cDfmod(fq[k], cpar, ik)
+
+            for iu in range(self.nU):
+                res = 0
+                for k in range(nfq):
+                    res += dfc[k] * (
+                        self.cfq[k, iu]*cos(fl[k]) - self.sfq[k, iu]*sin(fl[k]))
+                self.cU[iu] = res
+        else:
+            for k in range(nfq):
+                dfl[k] = lDfmod(fq[k], lpar, ik - npar1)
+
+            for iu in range(self.nU):
+                res = 0
+                for k in range(nfq):
+                    res += fc[k] * dfl[k] * (
+                        -self.cfq[k, iu]*sin(fl[k]) - self.sfq[k, iu]*cos(fl[k]))
+                self.cU[iu] = res
+
+
+    cdef dCovariance(self, double[:] params, int ik):
+        """see @PLagBase.dCovariance"""
+        cdef:
+            int i, j, n = self.n, n1 = self.n1
+            double* dCov = &self.dCov[0,0]
+        PLagBin.dCovariance(self, params, ik)
+
+        # set both psd parts to zero #
+        for i in range(n1):
+            for j in range(n1): self.dCov[i, j] = 0
+            for j in range(n1, n): self.dCov[i, j] = self.dCov[j, i]
+        for i in range(n1,n):
+            for j in range(n1,n): self.dCov[i, j] = 0
+
+
+    cdef add_measurement_noise(self, double[:] params, double* arr, int sign):
+        """see @PLagBase.add_measurement_noise
+        """
+        cdef:
+            int i, n = self.n, n1 = self.n1
+            double* sig2 = &self.sig2[0]
+            double fac1 = self.sig_fac[0], fac2 = self.sig_fac[1]
+        for i in range(n1): 
+            arr[i*n+i] += sign*fac1*sig2[i]
+        for i in range(n1, n): 
+            arr[i*n+i] += sign*fac2*sig2[i]
+
+
+    def calculate_model(self, params):
+        """Calculate model for the given parameters
+            at the frequencies of used internally
+
+        Called from python and not from here
+
+        """
+        cdef:
+            int npar1 = self.npar1
+            double[:] pc = params[:npar1], pl = params[npar1:]
+        cmod = np.array([self.cfmodel(self.fq[k], pc)*self.norm
+                    for k in range(self.nfq)])
+        lmod = np.array([self.lfmodel(self.fq[k], pl)*self.norm
+                    for k in range(self.nfq)])
+        return np.asarray(self.fq), cmod, lmod
 
