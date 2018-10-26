@@ -1,0 +1,1 @@
+This is an implementation of the method used in Zoghbi+2013 paper to calculate lags in the frequency domain from unevenly-sampled light curves.
