@@ -15,3 +15,7 @@ or whatever python package manager you use.
 `make test`
 
 - See the python notebook tutorial.ipynb for usage example.
+
+
+----
+Please reference http://adsabs.harvard.edu/abs/2013ApJ...777...24Z when using this code.
