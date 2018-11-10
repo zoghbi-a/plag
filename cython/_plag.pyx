@@ -177,7 +177,7 @@ cdef class PLagBase:
 
 
 
-    cpdef double logLikelihood(self, double[:] params, int icov, int inv):
+    cpdef double logLikelihood_(self, double[:] params, int icov, int inv):
         """Calculate the log Likelihood for given model params
         
         Args:
@@ -232,6 +232,78 @@ cdef class PLagBase:
         #-- invert C? --#
         if inv > 0:
             lapack.dpotri('L', &n, Cov, &n, &info)
+            for i in range(n):
+                for j in range(i):
+                    Cov[j+n*i] = Cov[i+n*j]
+
+        #-- loglikelihood --#
+        logLike = -0.5 * ( chi2 + logDet + n*log(2*M_PI) )
+        return logLike
+
+
+    cpdef double logLikelihood(self, double[:] params, int icov, int inv):
+        """Calculate the log Likelihood for given model params
+        
+        Args:
+            params: parameters of the model
+            icov: if not 0, calculate the covariance matrix.
+                Otherwise, assume it has already been calculated
+                and stored in self.Cov. It is not calculated only
+                if called from dLogLikelihood
+            inv: if > 0, also calculate the inverse of the
+                covariance matrix. It is not needed for the
+                logLikelihood, but it is needed when doing the
+                derivative. If requested, it will be stored in 
+                self.Cov.
+                If == 0, just do the likelihood calculation.
+
+        Returns:
+            log likelihood value
+
+        """
+
+        ## covariance matrix ##
+        cdef double* Cov = &self.Cov[0,0]
+        if icov != 0:
+            self.Covariance(params)
+
+
+        ## define some variables ##
+        cdef:
+            int i, j, n = self.n, info, nrhs = 1, lwork
+            double[::1] tmp_y = np.array(self.yarr)
+            double chi2, logDet, alpha=1.0
+            double* yarr = &self.yarr[0]
+            int[:] ipiv = np.empty(n, np.int32)
+            double[::1] W
+
+        # observation error #
+        self.add_measurement_noise(params, Cov, 1)
+
+
+
+        # LDLT decomposition #
+        lwork = -1
+        lapack.dsytrf('L', &n, Cov, &n, &ipiv[0], &alpha, &lwork, &info)
+        lwork = np.int(alpha)
+        W = np.empty(lwork, np.double)
+        lapack.dsytrf('L', &n, Cov, &n, &ipiv[0], &W[0], &lwork, &info)
+        if info: return -np.inf
+
+
+        #-- Determinant --#
+        logDet = 0
+        for i in range(n): logDet += log(np.abs(Cov[i+n*i]))
+        
+
+        lapack.dsytrs('L', &n, &nrhs, Cov, &n, &ipiv[0], &tmp_y[0], &n, &info)
+        if info: return -np.inf
+        chi2 = blas.ddot(&n, yarr, &nrhs, &tmp_y[0], &nrhs)
+
+
+        #-- invert C? --#
+        if inv > 0:
+            lapack.dsytri('L', &n, Cov, &n, &ipiv[0], &W[0], &info)
             for i in range(n):
                 for j in range(i):
                     Cov[j+n*i] = Cov[i+n*j]
@@ -1114,7 +1186,7 @@ cdef class psdf(PLagBin):
         cdef:
             int iu, k0, k, nfq = self.nfq
             double res, norm = self.norm, h=1e-5
-            double[:] dum, p, df
+            double[:] p, df
             double* fq = &self.fq[0]
             double (*fmod) (double, double[:])
         fmod = self.fmodel
@@ -1123,7 +1195,6 @@ cdef class psdf(PLagBin):
         if self.do_sig and ik==0:
             self.cU[:] = 0.
         else:
-            dum = np.zeros(4)
             p = np.array(params[k0:])
             df = np.zeros(nfq, np.double)
             for k in range(nfq):
@@ -1280,7 +1351,6 @@ cdef class lagf(PLagBin):
         PLagBin.Covariance(self, params)
         self.Cov[:n1, :n1] = self.C1[:,:]
         self.Cov[n1:, n1:] = self.C2[:,:]
-        cdef double[::1,:] c1 = np.array(self.Cov)
         self.add_measurement_noise(params, &self.Cov[0,0], 1)
 
 
@@ -1310,8 +1380,6 @@ cdef class lagf(PLagBin):
         for k in range(nfq):
             fc[k]  = cfmod(fq[k], cpar)
             fl[k]  = lfmod(fq[k], lpar)
-            dfc[k] = cDfmod(fq[k], cpar, ik)
-            dfl[k] = lDfmod(fq[k], lpar, ik)
 
 
         if ik<npar1:
@@ -1323,7 +1391,7 @@ cdef class lagf(PLagBin):
                 for k in range(nfq):
                     res += dfc[k] * (
                         self.cfq[k, iu]*cos(fl[k]) - self.sfq[k, iu]*sin(fl[k]))
-                self.cU[iu] = res
+                self.cU[iu] = res * norm
         else:
             for k in range(nfq):
                 dfl[k] = lDfmod(fq[k], lpar, ik - npar1)
@@ -1333,7 +1401,7 @@ cdef class lagf(PLagBin):
                 for k in range(nfq):
                     res += fc[k] * dfl[k] * (
                         -self.cfq[k, iu]*sin(fl[k]) - self.sfq[k, iu]*cos(fl[k]))
-                self.cU[iu] = res
+                self.cU[iu] = norm * res
 
 
     cdef dCovariance(self, double[:] params, int ik):
