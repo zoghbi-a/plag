@@ -2,7 +2,7 @@
 from __future__ import print_function
 from __future__ import division
 
-import _plag
+from . import _plag
 import numpy as np
 
 
