@@ -1,12 +1,10 @@
-This is an implementation of the method used in Zoghbi+2013 paper to calculate lags in the frequency domain from unevenly-sampled light curves.
+This is an implementation of the method used in Zoghbi+2013 paper (Astrophysical Journal; 2013. 777. 24Z) to calculate lags in the frequency domain from unevenly-sampled light curves.
 
 ## INSTALL
 
 - install cython by doing:
 
 `pip install cython`
-
-or whatever python package manager you use.
 
 - compile plag
 `make setup`
