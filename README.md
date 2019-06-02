@@ -12,7 +12,7 @@ This is an implementation of the method used in Zoghbi+2013 paper (Astrophysical
 - run test to make sure things compiled properly
 `make test`
 
-- See the python notebook tutorial.ipynb for usage example.
+- See the [following python notebook](https://github.com/abduzoghbi/plag/blob/master/tutorials/getting_started.md)  for usage example.
 
 
 ----
