@@ -1,3 +1,5 @@
+## NOTE plag is superseded by [fqlag](https://github.com/zoghbi-a/fqlag) which has a more stable implementation. Please use that instead.
+
 This is an implementation of the method used in Zoghbi+2013 paper (Astrophysical Journal; 2013. 777. 24Z) to calculate lags in the frequency domain from unevenly-sampled light curves.
 
 ## INSTALL
